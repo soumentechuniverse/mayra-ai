@@ -8,5 +8,7 @@ data class Conversation(
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val preview: String = "",
-    val messageCount: Int = 0
+    val messageCount: Int = 0,
+    val isPinned: Boolean = false,
+    val isArchived: Boolean = false
 )

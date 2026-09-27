@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface ConversationDao {
 
-    @Query("SELECT * FROM conversations ORDER BY updatedAt DESC")
+    @Query("SELECT * FROM conversations ORDER BY isPinned DESC, updatedAt DESC")
     fun getAllConversations(): Flow<List<ConversationEntity>>
 
     @Query("SELECT * FROM conversations WHERE id = :id LIMIT 1")
@@ -21,11 +21,26 @@ interface ConversationDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertConversation(conversation: ConversationEntity)
 
+    @Query("UPDATE conversations SET title = :newTitle, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun updateConversationTitle(id: String, newTitle: String, updatedAt: Long = System.currentTimeMillis())
+
+    @Query("UPDATE conversations SET isPinned = :isPinned WHERE id = :id")
+    suspend fun updateConversationPinned(id: String, isPinned: Boolean)
+
+    @Query("UPDATE conversations SET isArchived = :isArchived WHERE id = :id")
+    suspend fun updateConversationArchived(id: String, isArchived: Boolean)
+
     @Query("DELETE FROM conversations WHERE id = :id")
     suspend fun deleteConversation(id: String)
 
     @Query("SELECT * FROM chat_messages WHERE conversationId = :conversationId ORDER BY timestamp ASC")
     fun getMessagesForConversation(conversationId: String): Flow<List<ChatMessageEntity>>
+
+    @Query("SELECT * FROM chat_messages WHERE conversationId = :conversationId ORDER BY timestamp ASC")
+    suspend fun getMessageListForConversation(conversationId: String): List<ChatMessageEntity>
+
+    @Query("SELECT * FROM chat_messages")
+    suspend fun getAllMessages(): List<ChatMessageEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMessage(message: ChatMessageEntity)

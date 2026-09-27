@@ -11,7 +11,9 @@ data class ConversationEntity(
     val createdAt: Long,
     val updatedAt: Long,
     val preview: String,
-    val messageCount: Int
+    val messageCount: Int,
+    val isPinned: Boolean = false,
+    val isArchived: Boolean = false
 ) {
     fun toDomain(): Conversation = Conversation(
         id = id,
@@ -19,7 +21,9 @@ data class ConversationEntity(
         createdAt = createdAt,
         updatedAt = updatedAt,
         preview = preview,
-        messageCount = messageCount
+        messageCount = messageCount,
+        isPinned = isPinned,
+        isArchived = isArchived
     )
 
     companion object {
@@ -29,7 +33,9 @@ data class ConversationEntity(
             createdAt = conversation.createdAt,
             updatedAt = conversation.updatedAt,
             preview = conversation.preview,
-            messageCount = conversation.messageCount
+            messageCount = conversation.messageCount,
+            isPinned = conversation.isPinned,
+            isArchived = conversation.isArchived
         )
     }
 }

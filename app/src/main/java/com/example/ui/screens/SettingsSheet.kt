@@ -13,11 +13,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DeleteOutline
@@ -25,20 +28,31 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,7 +62,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.domain.model.AiModelConfig
+import com.example.domain.model.MemoryCategory
+import com.example.domain.model.MemoryItem
 import com.example.domain.model.SearchMode
+import com.example.domain.model.VoiceLanguage
+import com.example.domain.model.VoiceSettings
 import com.example.ui.theme.MayraCyan
 import com.example.ui.theme.MayraDarkSurface
 import com.example.ui.theme.MayraDarkSurfaceBorder
@@ -69,11 +87,32 @@ fun SettingsSheet(
     onDismiss: () -> Unit,
     searchMode: SearchMode = SearchMode.AUTO,
     onSearchModeChanged: (SearchMode) -> Unit = {},
+    voiceSettings: VoiceSettings = VoiceSettings(),
+    onVoiceInputLanguageChanged: (VoiceLanguage) -> Unit = {},
+    onVoiceAutoSpeakToggled: (Boolean) -> Unit = {},
+    onVoiceOutputLanguageChanged: (VoiceLanguage) -> Unit = {},
+    // Memory Controls
+    isMemoryEnabled: Boolean = true,
+    onToggleMemoryEnabled: (Boolean) -> Unit = {},
+    memories: List<MemoryItem> = emptyList(),
+    isManageMemoryOpen: Boolean = false,
+    onOpenManageMemory: () -> Unit = {},
+    onCloseManageMemory: () -> Unit = {},
+    onAddMemory: (String, MemoryCategory) -> Unit = { _, _ -> },
+    onToggleMemoryItem: (String, Boolean) -> Unit = { _, _ -> },
+    onDeleteMemory: (String) -> Unit = {},
+    onClearAllMemories: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     if (!isOpen) return
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    // Local dialog state for Clear All Memory confirmation
+    var showClearMemoriesDialog by remember { mutableStateOf(false) }
+    var newMemoryText by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf(MemoryCategory.PREFERENCE) }
+    var showAddMemoryInput by remember { mutableStateOf(false) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -264,7 +303,80 @@ fun SettingsSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // STEP 6: PERSONAL MEMORY SECTION
+            Text(
+                text = "PERSONAL MEMORY",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    letterSpacing = 1.sp,
+                    fontWeight = FontWeight.Bold
+                ),
+                color = MayraCyan
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Memory ON/OFF Switch
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MayraDarkSurfaceElevated)
+                    .border(1.dp, MayraDarkSurfaceBorder, RoundedCornerShape(10.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Mayra AI Memory",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Remember explicit user instructions & preferences across chats",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = isMemoryEnabled,
+                    onCheckedChange = onToggleMemoryEnabled,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = MayraCyan
+                    ),
+                    modifier = Modifier.testTag("memory_toggle_switch")
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Manage Memory Button
+            FilledTonalButton(
+                onClick = onOpenManageMemory,
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = MayraCyan.copy(alpha = 0.15f),
+                    contentColor = MayraCyan
+                ),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("manage_memory_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Psychology,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Manage Memory (${memories.size} saved)",
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
 
             // Web Search Grounding Mode Section
             Text(
@@ -318,6 +430,128 @@ fun SettingsSheet(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Voice Interaction Settings
+            Text(
+                text = "Voice Interaction",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Configure speech recognition and text-to-speech audio responses.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Voice Input Language Selector
+            Text(
+                text = "Voice Input Language",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items(VoiceLanguage.entries) { lang ->
+                    val isSelected = voiceSettings.inputLanguage == lang
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isSelected) MayraCyan.copy(alpha = 0.2f) else MayraDarkSurfaceElevated)
+                            .border(1.dp, if (isSelected) MayraCyan else MayraDarkSurfaceBorder, RoundedCornerShape(8.dp))
+                            .clickable { onVoiceInputLanguageChanged(lang) }
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                            .testTag("voice_input_lang_${lang.name.lowercase()}"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "${lang.displayName} (${lang.nativeName})",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                            ),
+                            color = if (isSelected) MayraCyan else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Auto-speak response switch
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MayraDarkSurfaceElevated)
+                    .border(1.dp, MayraDarkSurfaceBorder, RoundedCornerShape(10.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Auto-Speak AI Responses",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Automatically read out completed responses",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = voiceSettings.autoSpeakOutput,
+                    onCheckedChange = onVoiceAutoSpeakToggled,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = MayraCyan
+                    ),
+                    modifier = Modifier.testTag("auto_speak_switch")
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Voice Output Language Selector
+            Text(
+                text = "Voice Output Language",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items(VoiceLanguage.entries) { lang ->
+                    val isSelected = voiceSettings.outputLanguage == lang
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isSelected) MayraCyan.copy(alpha = 0.2f) else MayraDarkSurfaceElevated)
+                            .border(1.dp, if (isSelected) MayraCyan else MayraDarkSurfaceBorder, RoundedCornerShape(8.dp))
+                            .clickable { onVoiceOutputLanguageChanged(lang) }
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                            .testTag("voice_output_lang_${lang.name.lowercase()}"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "${lang.displayName} (${lang.nativeName})",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                            ),
+                            color = if (isSelected) MayraCyan else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
             // Clear Conversation Danger Row
             FilledTonalButton(
                 onClick = {
@@ -360,7 +594,7 @@ fun SettingsSheet(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "Mayra AI v1.0.0 (Foundation Step 1)",
+                    text = "Mayra AI v1.0.0 (Step 6 Conversation & Memory)",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                 )
@@ -368,5 +602,311 @@ fun SettingsSheet(
 
             Spacer(modifier = Modifier.height(16.dp))
         }
+    }
+
+    // MANAGE MEMORY MODAL DIALOG
+    if (isManageMemoryOpen) {
+        AlertDialog(
+            onDismissRequest = onCloseManageMemory,
+            title = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Personal Memory",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    IconButton(onClick = onCloseManageMemory) {
+                        Icon(
+                            imageVector = Icons.Outlined.Close,
+                            contentDescription = "Close manage memory",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "Explicit preferences and instructions remembered by Mayra AI across conversations.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    // Add Memory Button / Form Toggle
+                    if (!showAddMemoryInput) {
+                        FilledTonalButton(
+                            onClick = { showAddMemoryInput = true },
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = MayraCyan.copy(alpha = 0.15f),
+                                contentColor = MayraCyan
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("show_add_memory_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Add,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Add Custom Memory", style = MaterialTheme.typography.labelMedium)
+                        }
+                    } else {
+                        // Quick Add Memory Input
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MayraDarkSurface)
+                                .border(1.dp, MayraDarkSurfaceBorder, RoundedCornerShape(8.dp))
+                                .padding(10.dp)
+                        ) {
+                            Text(
+                                text = "Category",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            LazyRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                items(MemoryCategory.entries) { cat ->
+                                    FilterChip(
+                                        selected = selectedCategory == cat,
+                                        onClick = { selectedCategory = cat },
+                                        label = { Text(cat.displayName) },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = MayraCyan.copy(alpha = 0.2f),
+                                            selectedLabelColor = MayraCyan
+                                        )
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            OutlinedTextField(
+                                value = newMemoryText,
+                                onValueChange = { newMemoryText = it },
+                                placeholder = { Text("e.g. User prefers Bengali responses") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(8.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = MayraCyan,
+                                    cursorColor = MayraCyan
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("new_memory_text_field")
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                TextButton(onClick = {
+                                    showAddMemoryInput = false
+                                    newMemoryText = ""
+                                }) {
+                                    Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Button(
+                                    onClick = {
+                                        val trimmed = newMemoryText.trim()
+                                        if (trimmed.isNotEmpty()) {
+                                            onAddMemory(trimmed, selectedCategory)
+                                            newMemoryText = ""
+                                            showAddMemoryInput = false
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MayraCyan,
+                                        contentColor = Color(0xFF003548)
+                                    ),
+                                    modifier = Modifier.testTag("save_new_memory_button")
+                                ) {
+                                    Text("Save")
+                                }
+                            }
+                        }
+                    }
+
+                    if (memories.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 20.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "No personal memories stored yet.\nAsk Mayra AI to \"Remember that...\" in chat.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            memories.forEach { mem ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(MayraDarkSurface)
+                                        .border(1.dp, MayraDarkSurfaceBorder, RoundedCornerShape(8.dp))
+                                        .padding(10.dp)
+                                        .testTag("memory_item_${mem.id}"),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .background(MayraCyan.copy(alpha = 0.15f))
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = mem.category.displayName,
+                                                style = MaterialTheme.typography.labelSmall.copy(
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 10.sp
+                                                ),
+                                                color = MayraCyan
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = mem.content,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (mem.enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                        )
+                                    }
+
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Switch(
+                                            checked = mem.enabled,
+                                            onCheckedChange = { onToggleMemoryItem(mem.id, it) },
+                                            colors = SwitchDefaults.colors(
+                                                checkedThumbColor = Color.White,
+                                                checkedTrackColor = MayraCyan
+                                            ),
+                                            modifier = Modifier.testTag("toggle_memory_${mem.id}")
+                                        )
+
+                                        IconButton(
+                                            onClick = { onDeleteMemory(mem.id) },
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .testTag("delete_memory_${mem.id}")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Outlined.DeleteOutline,
+                                                contentDescription = "Delete memory item",
+                                                tint = MayraRose.copy(alpha = 0.7f),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        // Clear all memories button
+                        FilledTonalButton(
+                            onClick = { showClearMemoriesDialog = true },
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = MayraRose.copy(alpha = 0.15f),
+                                contentColor = MayraRose
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("clear_all_memory_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.DeleteOutline,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Clear All Memories", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = onCloseManageMemory,
+                    modifier = Modifier.testTag("done_manage_memory_button")
+                ) {
+                    Text("Done", color = MayraCyan)
+                }
+            },
+            containerColor = MayraDarkSurfaceElevated,
+            modifier = Modifier.testTag("manage_memory_dialog")
+        )
+    }
+
+    // Confirmation dialog for clearing all memories
+    if (showClearMemoriesDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearMemoriesDialog = false },
+            title = {
+                Text(
+                    text = "Clear All Memories?",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            },
+            text = {
+                Text(
+                    text = "Are you sure you want to clear all remembered preferences and instructions? This action cannot be undone.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onClearAllMemories()
+                        showClearMemoriesDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MayraRose,
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier.testTag("confirm_clear_all_memory_button")
+                ) {
+                    Text("Clear All")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showClearMemoriesDialog = false },
+                    modifier = Modifier.testTag("cancel_clear_all_memory_button")
+                ) {
+                    Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            containerColor = MayraDarkSurfaceElevated,
+            modifier = Modifier.testTag("clear_all_memories_dialog")
+        )
     }
 }

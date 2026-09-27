@@ -3,8 +3,20 @@ package com.example.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.data.local.VoicePreferences
 import com.example.data.repository.ChatRepository
 import com.example.domain.model.AiModelConfig
+import com.example.domain.model.ChatMessage
+import com.example.domain.model.Conversation
+import com.example.domain.model.MemoryItem
+import com.example.domain.model.MessageRole
+import com.example.domain.model.MessageStatus
+import com.example.domain.model.SearchMode
+import com.example.domain.model.SearchPhase
+import com.example.domain.model.VoiceSettings
+import com.example.domain.model.VoiceState
+import com.example.domain.service.SpeechRecognizerService
+import com.example.domain.service.TextToSpeechService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -13,12 +25,15 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class ChatViewModel(
-    private val repository: ChatRepository
+    private val repository: ChatRepository,
+    private val speechRecognizerService: SpeechRecognizerService? = null,
+    private val textToSpeechService: TextToSpeechService? = null,
+    private val voicePreferences: VoicePreferences? = null
 ) : ViewModel() {
 
     private val _inputText = MutableStateFlow("")
     private val _selectedModel = MutableStateFlow(AiModelConfig.AvailableModels.first())
-    private val _searchMode = MutableStateFlow(com.example.domain.model.SearchMode.AUTO)
+    private val _searchMode = MutableStateFlow(SearchMode.AUTO)
     private val _isDarkTheme = MutableStateFlow(true)
     private val _isSettingsOpen = MutableStateFlow(false)
     private val _isHistoryOpen = MutableStateFlow(false)
@@ -27,46 +42,172 @@ class ChatViewModel(
     private val _snackbarMessage = MutableStateFlow<String?>(null)
     private val _bannerError = MutableStateFlow<String?>(null)
 
+    private val _voiceState = MutableStateFlow<VoiceState>(VoiceState.Idle)
+    private val _voiceSettings = MutableStateFlow(voicePreferences?.settings?.value ?: VoiceSettings())
+
+    // Step 6: Advanced Conversation Management & Memory States
+    private val _historySearchQuery = MutableStateFlow("")
+    private val _showArchivedInHistory = MutableStateFlow(false)
+    private val _renameConversationDialogState = MutableStateFlow<Conversation?>(null)
+    private val _deleteConversationDialogState = MutableStateFlow<Conversation?>(null)
+    private val _isManageMemoryOpen = MutableStateFlow(false)
+    private val _clearMemoriesConfirmationOpen = MutableStateFlow(false)
+
+    private var lastAutoSpokenMessageId: String? = null
+
+    init {
+        // Collect voice preferences
+        if (voicePreferences != null) {
+            viewModelScope.launch {
+                voicePreferences.settings.collect { s ->
+                    _voiceSettings.value = s
+                }
+            }
+        }
+
+        // Collect Speech Recognizer state
+        if (speechRecognizerService != null) {
+            viewModelScope.launch {
+                speechRecognizerService.state.collect { s ->
+                    if (s !is VoiceState.Idle) {
+                        _voiceState.value = s
+                    } else if (_voiceState.value !is VoiceState.Speaking && _voiceState.value !is VoiceState.Error) {
+                        _voiceState.value = VoiceState.Idle
+                    }
+                }
+            }
+        }
+
+        // Collect Text-To-Speech state
+        if (textToSpeechService != null) {
+            viewModelScope.launch {
+                textToSpeechService.state.collect { s ->
+                    if (s is VoiceState.Speaking) {
+                        _voiceState.value = s
+                    } else if (_voiceState.value is VoiceState.Speaking) {
+                        _voiceState.value = VoiceState.Idle
+                    }
+                }
+            }
+        }
+
+        // Auto-speak completed assistant responses if enabled in settings
+        viewModelScope.launch {
+            repository.messages.collect { msgList ->
+                val lastMsg = msgList.lastOrNull()
+                if (lastMsg != null &&
+                    lastMsg.role == MessageRole.ASSISTANT &&
+                    lastMsg.status == MessageStatus.SENT &&
+                    lastMsg.content.isNotBlank() &&
+                    lastMsg.id != lastAutoSpokenMessageId
+                ) {
+                    if (_voiceSettings.value.autoSpeakOutput && !repository.isGenerating.value) {
+                        lastAutoSpokenMessageId = lastMsg.id
+                        textToSpeechService?.speak(
+                            messageId = lastMsg.id,
+                            text = lastMsg.content,
+                            language = _voiceSettings.value.outputLanguage
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     val uiState: StateFlow<ChatUiState> = combine(
-        repository.activeConversation,
-        repository.messages,
-        repository.conversations,
-        repository.isGenerating,
-        repository.searchPhase,
-        _inputText,
-        _selectedModel,
-        _searchMode,
-        _isDarkTheme,
-        _isSettingsOpen,
-        _isHistoryOpen,
-        _isAttachmentPickerOpen,
-        _pendingAttachments,
-        _snackbarMessage,
-        _bannerError
-    ) { args: Array<Any?> ->
-        @Suppress("UNCHECKED_CAST")
+        combine(
+            repository.activeConversation,
+            repository.messages,
+            repository.conversations,
+            repository.memories,
+            repository.isMemoryEnabled
+        ) { activeConv, msgs, convs, mems, memEnabled ->
+            CombinedRepoState(activeConv, msgs, convs, mems, memEnabled)
+        },
+        combine(
+            repository.isGenerating,
+            repository.searchPhase,
+            _inputText,
+            _selectedModel,
+            _searchMode
+        ) { isGen, sPhase, input, model, sMode ->
+            CombinedGenState(isGen, sPhase, input, model, sMode)
+        },
+        combine(
+            _voiceState,
+            _voiceSettings,
+            _isDarkTheme,
+            _isSettingsOpen,
+            _isHistoryOpen
+        ) { vState, vSettings, dark, settingsOpen, histOpen ->
+            CombinedUiControlState(vState, vSettings, dark, settingsOpen, histOpen)
+        },
+        combine(
+            _isAttachmentPickerOpen,
+            _pendingAttachments,
+            _snackbarMessage,
+            _bannerError,
+            _historySearchQuery
+        ) { attOpen, pendingAtts, snack, banner, query ->
+            CombinedDialogState(attOpen, pendingAtts, snack, banner, query)
+        },
+        combine(
+            _showArchivedInHistory,
+            _renameConversationDialogState,
+            _deleteConversationDialogState,
+            _isManageMemoryOpen,
+            _clearMemoriesConfirmationOpen
+        ) { showArchived, renameConv, deleteConv, manageMem, clearMem ->
+            CombinedMemoryUiState(showArchived, renameConv, deleteConv, manageMem, clearMem)
+        }
+    ) { repo, gen, uiCtrl, dialog, memUi ->
+        // Compute filtered conversations for HistoryDrawer based on search query and archived tab
+        val query = dialog.historySearchQuery.trim()
+        val allConvs = repo.conversations
+        val filtered = if (query.isEmpty()) {
+            if (memUi.showArchived) {
+                allConvs.filter { it.isArchived }
+            } else {
+                allConvs.filter { !it.isArchived }
+            }
+        } else {
+            allConvs.filter { conv ->
+                conv.title.contains(query, ignoreCase = true) ||
+                    conv.preview.contains(query, ignoreCase = true)
+            }
+        }
+
         ChatUiState(
-            conversation = args[0] as? com.example.domain.model.Conversation,
-            messages = args[1] as? List<com.example.domain.model.ChatMessage> ?: emptyList(),
-            allConversations = args[2] as? List<com.example.domain.model.Conversation> ?: emptyList(),
-            isGenerating = args[3] as? Boolean ?: false,
-            searchPhase = args[4] as? com.example.domain.model.SearchPhase ?: com.example.domain.model.SearchPhase.IDLE,
-            inputText = args[5] as? String ?: "",
-            selectedModel = (args[6] as? AiModelConfig ?: AiModelConfig.AvailableModels.first()).copy(
-                searchMode = args[7] as? com.example.domain.model.SearchMode ?: com.example.domain.model.SearchMode.AUTO
-            ),
-            searchMode = args[7] as? com.example.domain.model.SearchMode ?: com.example.domain.model.SearchMode.AUTO,
-            isDarkTheme = args[8] as? Boolean ?: true,
-            isSettingsOpen = args[9] as? Boolean ?: false,
-            isHistoryOpen = args[10] as? Boolean ?: false,
-            isAttachmentPickerOpen = args[11] as? Boolean ?: false,
-            pendingAttachments = args[12] as? List<com.example.domain.model.Attachment> ?: emptyList(),
-            snackbarMessage = args[13] as? String,
-            bannerError = args[14] as? String
+            conversation = repo.activeConversation,
+            messages = repo.messages,
+            allConversations = allConvs,
+            filteredConversations = filtered,
+            historySearchQuery = dialog.historySearchQuery,
+            showArchivedInHistory = memUi.showArchived,
+            renameConversationDialogState = memUi.renameConversation,
+            deleteConversationDialogState = memUi.deleteConversation,
+            memories = repo.memories,
+            isMemoryEnabled = repo.isMemoryEnabled,
+            isManageMemoryOpen = memUi.isManageMemoryOpen,
+            clearMemoriesConfirmationOpen = memUi.clearMemoriesConfirmationOpen,
+            isGenerating = gen.isGenerating,
+            searchPhase = gen.searchPhase,
+            inputText = gen.inputText,
+            selectedModel = gen.selectedModel.copy(searchMode = gen.searchMode),
+            searchMode = gen.searchMode,
+            voiceState = uiCtrl.voiceState,
+            voiceSettings = uiCtrl.voiceSettings,
+            isDarkTheme = uiCtrl.isDarkTheme,
+            isSettingsOpen = uiCtrl.isSettingsOpen,
+            isHistoryOpen = uiCtrl.isHistoryOpen,
+            isAttachmentPickerOpen = dialog.isAttachmentPickerOpen,
+            pendingAttachments = dialog.pendingAttachments,
+            snackbarMessage = dialog.snackbarMessage,
+            bannerError = dialog.bannerError
         )
     }.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
+        started = SharingStarted.Eagerly,
         initialValue = ChatUiState()
     )
 
@@ -77,6 +218,9 @@ class ChatViewModel(
             }
 
             ChatUiEvent.SendClicked -> {
+                textToSpeechService?.stop()
+                speechRecognizerService?.stopListening()
+
                 val currentText = _inputText.value.trim()
                 val attachments = _pendingAttachments.value
                 if (currentText.isEmpty() && attachments.isEmpty()) {
@@ -96,38 +240,48 @@ class ChatViewModel(
             }
 
             is ChatUiEvent.SuggestionClicked -> {
+                textToSpeechService?.stop()
                 _inputText.value = ""
                 _bannerError.value = null
                 viewModelScope.launch {
-                    val result = repository.sendMessage(event.prompt, _selectedModel.value)
+                    val result = repository.sendMessage(event.prompt, _selectedModel.value, emptyList())
                     if (result.isFailure) {
                         _bannerError.value = result.exceptionOrNull()?.localizedMessage
-                            ?: "Unable to process prompt. Tap retry."
+                            ?: "Mayra AI service request failed. Tap retry to reconnect."
                     }
                 }
             }
 
             ChatUiEvent.RetryLastFailed -> {
+                textToSpeechService?.stop()
                 _bannerError.value = null
                 viewModelScope.launch {
                     val result = repository.retryLastFailed(_selectedModel.value)
                     if (result.isFailure) {
                         _bannerError.value = result.exceptionOrNull()?.localizedMessage
-                            ?: "Retry attempt failed."
+                            ?: "Retry failed. Please check network connection."
                     }
                 }
             }
 
             ChatUiEvent.NewChatClicked -> {
+                textToSpeechService?.stop()
+                speechRecognizerService?.cancelListening()
+                _pendingAttachments.value = emptyList()
+                _inputText.value = ""
+                _bannerError.value = null
                 viewModelScope.launch {
                     repository.startNewConversation()
                     _isHistoryOpen.value = false
-                    _bannerError.value = null
-                    _inputText.value = ""
                 }
             }
 
             is ChatUiEvent.SelectConversation -> {
+                textToSpeechService?.stop()
+                speechRecognizerService?.cancelListening()
+                _pendingAttachments.value = emptyList()
+                _inputText.value = ""
+                _bannerError.value = null
                 viewModelScope.launch {
                     repository.selectConversation(event.conversationId)
                     _isHistoryOpen.value = false
@@ -137,8 +291,101 @@ class ChatViewModel(
             is ChatUiEvent.DeleteConversation -> {
                 viewModelScope.launch {
                     repository.deleteConversation(event.conversationId)
+                    _snackbarMessage.value = "Conversation deleted."
                 }
             }
+
+            is ChatUiEvent.RenameConversation -> {
+                viewModelScope.launch {
+                    repository.renameConversation(event.conversationId, event.newTitle)
+                    _renameConversationDialogState.value = null
+                    _snackbarMessage.value = "Conversation renamed."
+                }
+            }
+
+            is ChatUiEvent.TogglePinConversation -> {
+                viewModelScope.launch {
+                    repository.togglePinConversation(event.conversationId)
+                }
+            }
+
+            is ChatUiEvent.ToggleArchiveConversation -> {
+                viewModelScope.launch {
+                    repository.toggleArchiveConversation(event.conversationId)
+                }
+            }
+
+            is ChatUiEvent.RequestRenameConversation -> {
+                _renameConversationDialogState.value = event.conversation
+            }
+
+            is ChatUiEvent.RequestDeleteConversation -> {
+                _deleteConversationDialogState.value = event.conversation
+            }
+
+            ChatUiEvent.ConfirmDeleteConversation -> {
+                val target = _deleteConversationDialogState.value
+                _deleteConversationDialogState.value = null
+                if (target != null) {
+                    viewModelScope.launch {
+                        repository.deleteConversation(target.id)
+                        _snackbarMessage.value = "Conversation deleted."
+                    }
+                }
+            }
+
+            ChatUiEvent.DismissDeleteConversation -> {
+                _deleteConversationDialogState.value = null
+            }
+
+            is ChatUiEvent.HistorySearchQueryChanged -> {
+                _historySearchQuery.value = event.query
+            }
+
+            is ChatUiEvent.ToggleHistoryArchivedFilter -> {
+                _showArchivedInHistory.value = event.showArchived
+            }
+
+            // Memory Events
+            is ChatUiEvent.ToggleMemoryEnabled -> {
+                repository.setMemoryEnabled(event.enabled)
+                _snackbarMessage.value = if (event.enabled) "Mayra AI memory enabled." else "Mayra AI memory paused."
+            }
+
+            ChatUiEvent.OpenManageMemory -> _isManageMemoryOpen.value = true
+            ChatUiEvent.CloseManageMemory -> _isManageMemoryOpen.value = false
+
+            is ChatUiEvent.AddMemory -> {
+                viewModelScope.launch {
+                    repository.saveMemory(event.content, event.category)
+                    _snackbarMessage.value = "Saved to memory."
+                }
+            }
+
+            is ChatUiEvent.ToggleMemoryItem -> {
+                viewModelScope.launch {
+                    repository.toggleMemoryItemEnabled(event.memoryId, event.enabled)
+                }
+            }
+
+            is ChatUiEvent.DeleteMemoryItem -> {
+                viewModelScope.launch {
+                    repository.deleteMemory(event.memoryId)
+                    _snackbarMessage.value = "Memory item deleted."
+                }
+            }
+
+            ChatUiEvent.RequestClearMemories -> _clearMemoriesConfirmationOpen.value = true
+
+            ChatUiEvent.ConfirmClearMemories -> {
+                _clearMemoriesConfirmationOpen.value = false
+                viewModelScope.launch {
+                    repository.clearAllMemories()
+                    _snackbarMessage.value = "All memories cleared."
+                }
+            }
+
+            ChatUiEvent.DismissClearMemories -> _clearMemoriesConfirmationOpen.value = false
 
             is ChatUiEvent.ModelSelected -> {
                 _selectedModel.value = event.model
@@ -155,10 +402,16 @@ class ChatViewModel(
             }
 
             ChatUiEvent.OpenSettings -> _isSettingsOpen.value = true
-            ChatUiEvent.CloseSettings -> _isSettingsOpen.value = false
+            ChatUiEvent.CloseSettings -> {
+                _isSettingsOpen.value = false
+                _isManageMemoryOpen.value = false
+            }
 
             ChatUiEvent.OpenHistory -> _isHistoryOpen.value = true
-            ChatUiEvent.CloseHistory -> _isHistoryOpen.value = false
+            ChatUiEvent.CloseHistory -> {
+                _isHistoryOpen.value = false
+                _historySearchQuery.value = ""
+            }
 
             ChatUiEvent.ToggleTheme -> _isDarkTheme.value = !_isDarkTheme.value
 
@@ -186,10 +439,75 @@ class ChatViewModel(
             }
 
             ChatUiEvent.VoicePlaceholderClicked -> {
-                _snackbarMessage.value = "High-fidelity voice conversation will be enabled in the upcoming update."
+                if (_voiceState.value is VoiceState.Listening) {
+                    onEvent(ChatUiEvent.StopVoiceInput)
+                } else {
+                    onEvent(ChatUiEvent.StartVoiceInput)
+                }
+            }
+
+            ChatUiEvent.StartVoiceInput -> {
+                textToSpeechService?.stop()
+                val targetLang = _voiceSettings.value.inputLanguage
+                speechRecognizerService?.startListening(targetLang) { recognized ->
+                    val trimmedRecognized = recognized.trim()
+                    if (trimmedRecognized.isNotEmpty()) {
+                        val current = _inputText.value.trim()
+                        _inputText.value = if (current.isEmpty()) trimmedRecognized else "$current $trimmedRecognized"
+                        _snackbarMessage.value = "Speech converted to text. You can edit before sending."
+                    }
+                }
+            }
+
+            ChatUiEvent.StopVoiceInput -> {
+                speechRecognizerService?.stopListening()
+            }
+
+            ChatUiEvent.CancelVoiceInput -> {
+                speechRecognizerService?.cancelListening()
+            }
+
+            ChatUiEvent.VoicePermissionDenied -> {
+                _voiceState.value = VoiceState.Error("Microphone permission was denied. Text chat remains functional.")
+                _snackbarMessage.value = "Microphone permission is required to use voice input."
+            }
+
+            is ChatUiEvent.SpeakMessage -> {
+                speechRecognizerService?.cancelListening()
+                textToSpeechService?.speak(
+                    messageId = event.messageId,
+                    text = event.text,
+                    language = _voiceSettings.value.outputLanguage
+                )
+            }
+
+            ChatUiEvent.PauseSpeech -> textToSpeechService?.pause()
+            ChatUiEvent.ResumeSpeech -> textToSpeechService?.resume()
+            ChatUiEvent.StopSpeech -> textToSpeechService?.stop()
+
+            is ChatUiEvent.VoiceInputLanguageChanged -> {
+                voicePreferences?.updateInputLanguage(event.language) ?: run {
+                    _voiceSettings.value = _voiceSettings.value.copy(inputLanguage = event.language)
+                }
+                _snackbarMessage.value = "Voice input language: ${event.language.displayName}"
+            }
+
+            is ChatUiEvent.VoiceAutoSpeakToggled -> {
+                voicePreferences?.updateAutoSpeak(event.enabled) ?: run {
+                    _voiceSettings.value = _voiceSettings.value.copy(autoSpeakOutput = event.enabled)
+                }
+                _snackbarMessage.value = if (event.enabled) "Auto voice responses enabled" else "Auto voice responses disabled"
+            }
+
+            is ChatUiEvent.VoiceOutputLanguageChanged -> {
+                voicePreferences?.updateOutputLanguage(event.language) ?: run {
+                    _voiceSettings.value = _voiceSettings.value.copy(outputLanguage = event.language)
+                }
+                _snackbarMessage.value = "Voice output language: ${event.language.displayName}"
             }
 
             ChatUiEvent.ClearCurrentChat -> {
+                textToSpeechService?.stop()
                 viewModelScope.launch {
                     repository.clearMessages()
                     _snackbarMessage.value = "Conversation cleared."
@@ -206,13 +524,70 @@ class ChatViewModel(
         }
     }
 
+    override fun onCleared() {
+        super.onCleared()
+        speechRecognizerService?.destroy()
+        textToSpeechService?.destroy()
+    }
+
     companion object {
-        fun provideFactory(repository: ChatRepository): ViewModelProvider.Factory =
+        fun provideFactory(
+            repository: ChatRepository,
+            speechRecognizerService: SpeechRecognizerService? = null,
+            textToSpeechService: TextToSpeechService? = null,
+            voicePreferences: VoicePreferences? = null
+        ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                    return ChatViewModel(repository) as T
+                    return ChatViewModel(
+                        repository = repository,
+                        speechRecognizerService = speechRecognizerService,
+                        textToSpeechService = textToSpeechService,
+                        voicePreferences = voicePreferences
+                    ) as T
                 }
             }
     }
+
+    // Helper data classes for combine decomposition
+    private data class CombinedRepoState(
+        val activeConversation: Conversation?,
+        val messages: List<ChatMessage>,
+        val conversations: List<Conversation>,
+        val memories: List<MemoryItem>,
+        val isMemoryEnabled: Boolean
+    )
+
+    private data class CombinedGenState(
+        val isGenerating: Boolean,
+        val searchPhase: SearchPhase,
+        val inputText: String,
+        val selectedModel: AiModelConfig,
+        val searchMode: SearchMode
+    )
+
+    private data class CombinedUiControlState(
+        val voiceState: VoiceState,
+        val voiceSettings: VoiceSettings,
+        val isDarkTheme: Boolean,
+        val isSettingsOpen: Boolean,
+        val isHistoryOpen: Boolean
+    )
+
+    private data class CombinedDialogState(
+        val isAttachmentPickerOpen: Boolean,
+        val pendingAttachments: List<com.example.domain.model.Attachment>,
+        val snackbarMessage: String?,
+        val bannerError: String?,
+        val historySearchQuery: String
+    )
+
+    private data class CombinedMemoryUiState(
+        val showArchived: Boolean,
+        val renameConversation: Conversation?,
+        val deleteConversation: Conversation?,
+        val isManageMemoryOpen: Boolean,
+        val clearMemoriesConfirmationOpen: Boolean
+    )
 }

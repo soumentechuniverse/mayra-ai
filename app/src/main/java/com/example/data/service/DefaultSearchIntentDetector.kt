@@ -22,8 +22,8 @@ class DefaultSearchIntentDetector : SearchIntentDetector {
         )
 
         private val BENGALI_EXPLICIT_SEARCH = listOf(
-            "ওয়েবে খোঁজ", "ওয়েবে সার্চ", "অনলাইনে খোঁজ", "অনলাইনে সার্চ",
-            "ইন্টারনেটে খোঁজ", "ইন্টারনেটে সার্চ", "নেট ঘেঁটে"
+            "ওয়েবে খোঁজ", "ওয়েবে খুঁজ", "ওয়েবে সার্চ", "অনলাইনে খোঁজ", "অনলাইনে খুঁজ", "অনলাইনে সার্চ",
+            "ইন্টারনেটে খোঁজ", "ইন্টারনেটে খুঁজ", "ইন্টারনেটে সার্চ", "নেট ঘেঁটে", "খুঁজে দেখো"
         )
 
         private val HINDI_EXPLICIT_SEARCH = listOf(

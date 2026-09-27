@@ -1,5 +1,9 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,8 +26,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import com.example.domain.model.VoiceState
 import com.example.ui.components.AttachmentBottomSheet
 import com.example.ui.components.ChatMessageItem
 import com.example.ui.components.EmptyChatView
@@ -40,8 +47,19 @@ fun ChatScreen(
     onEvent: (ChatUiEvent) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            onEvent(ChatUiEvent.StartVoiceInput)
+        } else {
+            onEvent(ChatUiEvent.VoicePermissionDenied)
+        }
+    }
 
     // Auto-scroll to bottom when new messages are added, response streams, or thinking state changes
     LaunchedEffect(state.messages.size, state.isGenerating, state.messages.lastOrNull()?.content?.length) {
@@ -50,7 +68,7 @@ fun ChatScreen(
         }
     }
 
-    // Display snackbar feedback when triggered
+    // Display transient snackbars for state updates
     LaunchedEffect(state.snackbarMessage) {
         state.snackbarMessage?.let { msg ->
             snackbarHostState.showSnackbar(msg)
@@ -61,15 +79,14 @@ fun ChatScreen(
     Scaffold(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+            .statusBarsPadding(),
         topBar = {
             MayraHeader(
                 activeModel = state.selectedModel,
                 isGenerating = state.isGenerating,
                 onNewChat = { onEvent(ChatUiEvent.NewChatClicked) },
                 onOpenHistory = { onEvent(ChatUiEvent.OpenHistory) },
-                onOpenSettings = { onEvent(ChatUiEvent.OpenSettings) },
-                modifier = Modifier.statusBarsPadding()
+                onOpenSettings = { onEvent(ChatUiEvent.OpenSettings) }
             )
         },
         bottomBar = {
@@ -79,7 +96,24 @@ fun ChatScreen(
                 onTextChanged = { onEvent(ChatUiEvent.InputTextChanged(it)) },
                 onSend = { onEvent(ChatUiEvent.SendClicked) },
                 onAttachmentClicked = { onEvent(ChatUiEvent.OpenAttachmentPicker) },
-                onVoiceClicked = { onEvent(ChatUiEvent.VoicePlaceholderClicked) },
+                onVoiceClicked = {
+                    if (state.voiceState is VoiceState.Listening) {
+                        onEvent(ChatUiEvent.StopVoiceInput)
+                    } else {
+                        val hasMicPermission = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.RECORD_AUDIO
+                        ) == PackageManager.PERMISSION_GRANTED
+
+                        if (hasMicPermission) {
+                            onEvent(ChatUiEvent.StartVoiceInput)
+                        } else {
+                            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        }
+                    }
+                },
+                voiceState = state.voiceState,
+                onCancelVoice = { onEvent(ChatUiEvent.CancelVoiceInput) },
                 onStopGenerating = { onEvent(ChatUiEvent.StopGeneration) },
                 pendingAttachments = state.pendingAttachments,
                 onRemoveAttachment = { onEvent(ChatUiEvent.RemovePendingAttachment(it)) },
@@ -128,7 +162,12 @@ fun ChatScreen(
                             onRetry = { onEvent(ChatUiEvent.RetryLastFailed) },
                             onCopiedFeedback = {
                                 onEvent(ChatUiEvent.DismissSnackbar("Copied to clipboard"))
-                            }
+                            },
+                            voiceState = state.voiceState,
+                            onSpeak = { onEvent(ChatUiEvent.SpeakMessage(msg.id, msg.content)) },
+                            onPauseSpeech = { onEvent(ChatUiEvent.PauseSpeech) },
+                            onResumeSpeech = { onEvent(ChatUiEvent.ResumeSpeech) },
+                            onStopSpeech = { onEvent(ChatUiEvent.StopSpeech) }
                         )
                     }
 
@@ -171,18 +210,39 @@ fun ChatScreen(
         onClearChat = { onEvent(ChatUiEvent.ClearCurrentChat) },
         onDismiss = { onEvent(ChatUiEvent.CloseSettings) },
         searchMode = state.searchMode,
-        onSearchModeChanged = { onEvent(ChatUiEvent.SearchModeChanged(it)) }
+        onSearchModeChanged = { onEvent(ChatUiEvent.SearchModeChanged(it)) },
+        voiceSettings = state.voiceSettings,
+        onVoiceInputLanguageChanged = { onEvent(ChatUiEvent.VoiceInputLanguageChanged(it)) },
+        onVoiceAutoSpeakToggled = { onEvent(ChatUiEvent.VoiceAutoSpeakToggled(it)) },
+        onVoiceOutputLanguageChanged = { onEvent(ChatUiEvent.VoiceOutputLanguageChanged(it)) },
+        isMemoryEnabled = state.isMemoryEnabled,
+        onToggleMemoryEnabled = { onEvent(ChatUiEvent.ToggleMemoryEnabled(it)) },
+        memories = state.memories,
+        isManageMemoryOpen = state.isManageMemoryOpen,
+        onOpenManageMemory = { onEvent(ChatUiEvent.OpenManageMemory) },
+        onCloseManageMemory = { onEvent(ChatUiEvent.CloseManageMemory) },
+        onAddMemory = { content, cat -> onEvent(ChatUiEvent.AddMemory(content, cat)) },
+        onToggleMemoryItem = { id, enabled -> onEvent(ChatUiEvent.ToggleMemoryItem(id, enabled)) },
+        onDeleteMemory = { onEvent(ChatUiEvent.DeleteMemoryItem(it)) },
+        onClearAllMemories = { onEvent(ChatUiEvent.ConfirmClearMemories) }
     )
 
     // Modal History Sheet Architecture
     HistoryDrawer(
         isOpen = state.isHistoryOpen,
         activeConversationId = state.conversation?.id,
-        conversations = state.allConversations,
+        conversations = state.filteredConversations,
         onSelectConversation = { onEvent(ChatUiEvent.SelectConversation(it)) },
         onDeleteConversation = { onEvent(ChatUiEvent.DeleteConversation(it)) },
         onNewChat = { onEvent(ChatUiEvent.NewChatClicked) },
-        onDismiss = { onEvent(ChatUiEvent.CloseHistory) }
+        onDismiss = { onEvent(ChatUiEvent.CloseHistory) },
+        searchQuery = state.historySearchQuery,
+        onSearchQueryChanged = { onEvent(ChatUiEvent.HistorySearchQueryChanged(it)) },
+        showArchived = state.showArchivedInHistory,
+        onToggleArchivedFilter = { onEvent(ChatUiEvent.ToggleHistoryArchivedFilter(it)) },
+        onPinConversation = { onEvent(ChatUiEvent.TogglePinConversation(it)) },
+        onArchiveConversation = { onEvent(ChatUiEvent.ToggleArchiveConversation(it)) },
+        onRenameConversation = { id, title -> onEvent(ChatUiEvent.RenameConversation(id, title)) }
     )
 
     // Modal Attachment Sheet Architecture

@@ -39,6 +39,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,12 +53,21 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.R
 import com.example.domain.model.Attachment
 import com.example.domain.model.AttachmentType
+import com.example.domain.model.VoiceState
 import com.example.ui.theme.MayraCyan
 import com.example.ui.theme.MayraCyanBright
 import com.example.ui.theme.MayraDarkSurfaceBorder
@@ -78,10 +88,23 @@ fun MessageComposer(
     onStopGenerating: () -> Unit = {},
     pendingAttachments: List<Attachment> = emptyList(),
     onRemoveAttachment: (String) -> Unit = {},
+    voiceState: VoiceState = VoiceState.Idle,
+    onCancelVoice: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val hasText = text.isNotBlank()
     val canSend = (hasText || pendingAttachments.isNotEmpty()) && !isGenerating
+
+    val infiniteTransition = rememberInfiniteTransition(label = "mic_pulse")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 0.9f,
+        targetValue = 1.25f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(600),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "mic_scale"
+    )
 
     Column(
         modifier = modifier
@@ -90,6 +113,75 @@ fun MessageComposer(
             .padding(horizontal = 12.dp, vertical = 6.dp)
             .navigationBarsPadding()
     ) {
+        // Active Listening Banner (Speech-To-Text in progress)
+        if (voiceState is VoiceState.Listening) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color(0xFF191E2E))
+                    .border(1.dp, MayraRose.copy(alpha = 0.6f), RoundedCornerShape(14.dp))
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .testTag("listening_banner"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .scale(pulseScale)
+                            .clip(CircleShape)
+                            .background(MayraRose)
+                    )
+                    Text(
+                        text = if (voiceState.partialText.isNotBlank()) voiceState.partialText else "Listening… Speak now",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (voiceState.partialText.isNotBlank()) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = onVoiceClicked,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .testTag("stop_listening_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Check,
+                            contentDescription = "Finish speaking",
+                            tint = MayraCyan,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    IconButton(
+                        onClick = onCancelVoice,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .testTag("cancel_listening_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Close,
+                            contentDescription = "Cancel voice input",
+                            tint = MayraRose,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+        }
+
         // Pending Attachments Preview Tray
         if (pendingAttachments.isNotEmpty()) {
             LazyRow(
@@ -183,19 +275,26 @@ fun MessageComposer(
                 )
             }
 
-            // Voice Interaction Placeholder Button
+            // Voice Interaction Button (Speech Recognition)
+            val isListening = voiceState is VoiceState.Listening
             IconButton(
                 onClick = onVoiceClicked,
                 modifier = Modifier
                     .size(40.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (isListening) MayraRose.copy(alpha = 0.2f) else Color.Transparent
+                    )
                     .minimumInteractiveComponentSize()
                     .testTag("voice_button")
             ) {
                 Icon(
-                    imageVector = Icons.Outlined.Mic,
-                    contentDescription = stringResource(R.string.voice_input),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp)
+                    imageVector = if (isListening) Icons.Outlined.Stop else Icons.Outlined.Mic,
+                    contentDescription = if (isListening) "Stop listening" else stringResource(R.string.voice_input),
+                    tint = if (isListening) MayraRose else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .size(20.dp)
+                        .scale(if (isListening) pulseScale else 1f)
                 )
             }
 

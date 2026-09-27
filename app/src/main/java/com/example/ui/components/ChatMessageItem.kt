@@ -27,7 +27,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Pause
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.material.icons.outlined.VolumeUp
+import com.example.domain.model.VoiceState
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
@@ -87,6 +92,11 @@ fun ChatMessageItem(
     message: ChatMessage,
     onRetry: () -> Unit,
     onCopiedFeedback: () -> Unit,
+    voiceState: VoiceState = VoiceState.Idle,
+    onSpeak: () -> Unit = {},
+    onPauseSpeech: () -> Unit = {},
+    onResumeSpeech: () -> Unit = {},
+    onStopSpeech: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val isUser = message.role == MessageRole.USER
@@ -302,12 +312,12 @@ fun ChatMessageItem(
                             }
                         }
 
-                        // AI Action Bar: Copy full message
+                        // AI Action Bar: Copy full message & TTS Listen controls
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(top = 4.dp, start = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             IconButton(
@@ -332,6 +342,56 @@ fun ChatMessageItem(
                                     tint = if (isMessageCopied) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(15.dp)
                                 )
+                            }
+
+                            // Text-To-Speech Listen Controls
+                            if (message.status == MessageStatus.SENT && message.content.isNotBlank()) {
+                                val isThisMessageSpeaking = voiceState is VoiceState.Speaking && voiceState.messageId == message.id
+                                val isPaused = isThisMessageSpeaking && (voiceState as VoiceState.Speaking).isPaused
+
+                                if (isThisMessageSpeaking) {
+                                    IconButton(
+                                        onClick = if (isPaused) onResumeSpeech else onPauseSpeech,
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .testTag("tts_pause_resume_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isPaused) Icons.Outlined.PlayArrow else Icons.Outlined.Pause,
+                                            contentDescription = if (isPaused) "Resume listening" else "Pause speech",
+                                            tint = MayraCyan,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+
+                                    IconButton(
+                                        onClick = onStopSpeech,
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .testTag("tts_stop_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Stop,
+                                            contentDescription = "Stop speech",
+                                            tint = MayraRose,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                } else {
+                                    IconButton(
+                                        onClick = onSpeak,
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .testTag("tts_listen_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Outlined.VolumeUp,
+                                            contentDescription = "Listen to response",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
