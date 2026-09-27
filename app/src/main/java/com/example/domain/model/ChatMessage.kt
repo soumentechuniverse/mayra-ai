@@ -22,5 +22,6 @@ data class ChatMessage(
     val timestamp: Long = System.currentTimeMillis(),
     val status: MessageStatus = MessageStatus.SENT,
     val errorMessage: String? = null,
-    val attachments: List<AttachmentMetadata> = emptyList()
+    val attachments: List<AttachmentMetadata> = emptyList(),
+    val searchSources: List<SearchSource> = emptyList()
 )

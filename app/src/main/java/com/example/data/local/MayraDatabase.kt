@@ -13,7 +13,7 @@ import com.example.data.local.entity.ConversationEntity
         ConversationEntity::class,
         ChatMessageEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class MayraDatabase : RoomDatabase() {
@@ -30,7 +30,7 @@ abstract class MayraDatabase : RoomDatabase() {
                     MayraDatabase::class.java,
                     "mayra_ai_database"
                 )
-                    .fallbackToDestructiveMigration()
+                    .fallbackToDestructiveMigration(dropAllTables = true)
                     .build()
                 INSTANCE = instance
                 instance

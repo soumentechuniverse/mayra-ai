@@ -12,6 +12,7 @@ sealed interface ChatUiEvent {
     data class DeleteConversation(val conversationId: String) : ChatUiEvent
     data class ModelSelected(val model: AiModelConfig) : ChatUiEvent
     data class TemperatureChanged(val temperature: Float) : ChatUiEvent
+    data class SearchModeChanged(val mode: com.example.domain.model.SearchMode) : ChatUiEvent
     data object OpenSettings : ChatUiEvent
     data object CloseSettings : ChatUiEvent
     data object OpenHistory : ChatUiEvent

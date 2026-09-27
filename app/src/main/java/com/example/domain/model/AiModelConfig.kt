@@ -6,7 +6,8 @@ data class AiModelConfig(
     val description: String = "Fast, responsive intelligence powered by Gemini Flash",
     val temperature: Float = 0.7f,
     val maxTokens: Int = 4096,
-    val systemPrompt: String = DEFAULT_SYSTEM_INSTRUCTION
+    val systemPrompt: String = DEFAULT_SYSTEM_INSTRUCTION,
+    val searchMode: SearchMode = SearchMode.AUTO
 ) {
     companion object {
         const val DEFAULT_SYSTEM_INSTRUCTION = """You are Mayra AI, a helpful, accurate, multilingual AI assistant.

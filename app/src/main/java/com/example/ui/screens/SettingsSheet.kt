@@ -48,6 +48,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.domain.model.AiModelConfig
+import com.example.domain.model.SearchMode
 import com.example.ui.theme.MayraCyan
 import com.example.ui.theme.MayraDarkSurface
 import com.example.ui.theme.MayraDarkSurfaceBorder
@@ -66,6 +67,8 @@ fun SettingsSheet(
     onToggleTheme: () -> Unit,
     onClearChat: () -> Unit,
     onDismiss: () -> Unit,
+    searchMode: SearchMode = SearchMode.AUTO,
+    onSearchModeChanged: (SearchMode) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     if (!isOpen) return
@@ -256,6 +259,58 @@ fun SettingsSheet(
                             text = "Native support for Bengali, English, Hindi, Urdu, Arabic, Spanish, French, German, Chinese, Japanese, and more. Mixed language dialogue is fully enabled.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Web Search Grounding Mode Section
+            Text(
+                text = "Web Search & Grounding",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Controls when Mayra AI accesses Google Search for live, real-time facts.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf(SearchMode.AUTO, SearchMode.ENABLED, SearchMode.DISABLED).forEach { mode ->
+                    val isSelected = searchMode == mode
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (isSelected) MayraCyan.copy(alpha = 0.2f) else MayraDarkSurfaceElevated)
+                            .border(
+                                1.dp,
+                                if (isSelected) MayraCyan else MayraDarkSurfaceBorder,
+                                RoundedCornerShape(10.dp)
+                            )
+                            .clickable { onSearchModeChanged(mode) }
+                            .padding(vertical = 10.dp)
+                            .testTag("search_mode_${mode.name.lowercase()}"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = when (mode) {
+                                SearchMode.AUTO -> "Auto"
+                                SearchMode.ENABLED -> "Always"
+                                SearchMode.DISABLED -> "Off"
+                            },
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                            ),
+                            color = if (isSelected) MayraCyan else MaterialTheme.colorScheme.onSurface
                         )
                     }
                 }

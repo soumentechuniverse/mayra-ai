@@ -4,6 +4,7 @@ import com.example.domain.model.AiModelConfig
 import com.example.domain.model.Attachment
 import com.example.domain.model.ChatMessage
 import com.example.domain.model.Conversation
+import com.example.domain.model.SearchPhase
 import kotlinx.coroutines.flow.StateFlow
 
 interface ChatRepository {
@@ -11,6 +12,7 @@ interface ChatRepository {
     val messages: StateFlow<List<ChatMessage>>
     val conversations: StateFlow<List<Conversation>>
     val isGenerating: StateFlow<Boolean>
+    val searchPhase: StateFlow<SearchPhase>
 
     suspend fun startNewConversation(title: String = "New Chat"): Conversation
     suspend fun selectConversation(conversationId: String)

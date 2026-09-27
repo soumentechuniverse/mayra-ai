@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -57,6 +58,11 @@ import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import coil.compose.AsyncImage
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.Public
+import androidx.compose.ui.platform.LocalUriHandler
+import com.example.domain.model.SearchSource
 import com.example.domain.model.AttachmentMetadata
 import com.example.domain.model.AttachmentType
 import com.example.domain.model.ChatMessage
@@ -270,7 +276,7 @@ fun ChatMessageItem(
                         }
                     } else {
                         // AI Markdown Body
-                        Box(
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(
@@ -290,6 +296,10 @@ fun ChatMessageItem(
                                 textColor = MaterialTheme.colorScheme.onSurface,
                                 onCodeCopied = onCopiedFeedback
                             )
+
+                            if (message.searchSources.isNotEmpty()) {
+                                AssistantSourcesSection(sources = message.searchSources)
+                            }
                         }
 
                         // AI Action Bar: Copy full message
@@ -470,5 +480,92 @@ private fun UserAttachmentPreview(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun AssistantSourcesSection(
+    sources: List<SearchSource>,
+    modifier: Modifier = Modifier
+) {
+    val uriHandler = LocalUriHandler.current
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp)
+            .testTag("sources_section")
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.padding(bottom = 6.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Public,
+                contentDescription = null,
+                tint = MayraCyan,
+                modifier = Modifier.size(15.dp)
+            )
+            Text(
+                text = "Sources",
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = MayraCyan
+            )
+        }
+
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            items(sources.size) { index ->
+                val source = sources[index]
+                SourceCitationChip(
+                    source = source,
+                    index = index,
+                    onClick = {
+                        try {
+                            uriHandler.openUri(source.url)
+                        } catch (e: Exception) {
+                            // Ignored if invalid URI format
+                        }
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SourceCitationChip(
+    source: SearchSource,
+    index: Int,
+    onClick: () -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFF141A29))
+            .border(1.dp, Color(0xFF232D42), RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+            .testTag("source_citation_$index")
+    ) {
+        Text(
+            text = source.domain.ifBlank { source.title },
+            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 140.dp)
+        )
+        Icon(
+            imageVector = Icons.AutoMirrored.Outlined.OpenInNew,
+            contentDescription = "Open source",
+            tint = MayraCyan,
+            modifier = Modifier.size(12.dp)
+        )
     }
 }

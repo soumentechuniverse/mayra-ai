@@ -18,6 +18,7 @@ class ChatViewModel(
 
     private val _inputText = MutableStateFlow("")
     private val _selectedModel = MutableStateFlow(AiModelConfig.AvailableModels.first())
+    private val _searchMode = MutableStateFlow(com.example.domain.model.SearchMode.AUTO)
     private val _isDarkTheme = MutableStateFlow(true)
     private val _isSettingsOpen = MutableStateFlow(false)
     private val _isHistoryOpen = MutableStateFlow(false)
@@ -31,8 +32,10 @@ class ChatViewModel(
         repository.messages,
         repository.conversations,
         repository.isGenerating,
+        repository.searchPhase,
         _inputText,
         _selectedModel,
+        _searchMode,
         _isDarkTheme,
         _isSettingsOpen,
         _isHistoryOpen,
@@ -47,15 +50,19 @@ class ChatViewModel(
             messages = args[1] as? List<com.example.domain.model.ChatMessage> ?: emptyList(),
             allConversations = args[2] as? List<com.example.domain.model.Conversation> ?: emptyList(),
             isGenerating = args[3] as? Boolean ?: false,
-            inputText = args[4] as? String ?: "",
-            selectedModel = args[5] as? AiModelConfig ?: AiModelConfig.AvailableModels.first(),
-            isDarkTheme = args[6] as? Boolean ?: true,
-            isSettingsOpen = args[7] as? Boolean ?: false,
-            isHistoryOpen = args[8] as? Boolean ?: false,
-            isAttachmentPickerOpen = args[9] as? Boolean ?: false,
-            pendingAttachments = args[10] as? List<com.example.domain.model.Attachment> ?: emptyList(),
-            snackbarMessage = args[11] as? String,
-            bannerError = args[12] as? String
+            searchPhase = args[4] as? com.example.domain.model.SearchPhase ?: com.example.domain.model.SearchPhase.IDLE,
+            inputText = args[5] as? String ?: "",
+            selectedModel = (args[6] as? AiModelConfig ?: AiModelConfig.AvailableModels.first()).copy(
+                searchMode = args[7] as? com.example.domain.model.SearchMode ?: com.example.domain.model.SearchMode.AUTO
+            ),
+            searchMode = args[7] as? com.example.domain.model.SearchMode ?: com.example.domain.model.SearchMode.AUTO,
+            isDarkTheme = args[8] as? Boolean ?: true,
+            isSettingsOpen = args[9] as? Boolean ?: false,
+            isHistoryOpen = args[10] as? Boolean ?: false,
+            isAttachmentPickerOpen = args[11] as? Boolean ?: false,
+            pendingAttachments = args[12] as? List<com.example.domain.model.Attachment> ?: emptyList(),
+            snackbarMessage = args[13] as? String,
+            bannerError = args[14] as? String
         )
     }.stateIn(
         scope = viewModelScope,
@@ -140,6 +147,11 @@ class ChatViewModel(
 
             is ChatUiEvent.TemperatureChanged -> {
                 _selectedModel.value = _selectedModel.value.copy(temperature = event.temperature)
+            }
+
+            is ChatUiEvent.SearchModeChanged -> {
+                _searchMode.value = event.mode
+                _snackbarMessage.value = "Web search set to ${event.mode.displayName}"
             }
 
             ChatUiEvent.OpenSettings -> _isSettingsOpen.value = true

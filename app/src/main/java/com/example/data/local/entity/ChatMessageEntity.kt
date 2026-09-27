@@ -9,6 +9,7 @@ import com.example.domain.model.AttachmentType
 import com.example.domain.model.ChatMessage
 import com.example.domain.model.MessageRole
 import com.example.domain.model.MessageStatus
+import com.example.domain.model.SearchSource
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -33,7 +34,8 @@ data class ChatMessageEntity(
     val timestamp: Long,
     val status: String,
     val errorMessage: String? = null,
-    val attachmentsJson: String? = null
+    val attachmentsJson: String? = null,
+    val searchSourcesJson: String? = null
 ) {
     fun toDomain(): ChatMessage = ChatMessage(
         id = id,
@@ -43,7 +45,8 @@ data class ChatMessageEntity(
         timestamp = timestamp,
         status = try { MessageStatus.valueOf(status) } catch (e: Exception) { MessageStatus.SENT },
         errorMessage = errorMessage,
-        attachments = deserializeAttachments(attachmentsJson)
+        attachments = deserializeAttachments(attachmentsJson),
+        searchSources = deserializeSearchSources(searchSourcesJson)
     )
 
     companion object {
@@ -55,7 +58,8 @@ data class ChatMessageEntity(
             timestamp = message.timestamp,
             status = message.status.name,
             errorMessage = message.errorMessage,
-            attachmentsJson = serializeAttachments(message.attachments)
+            attachmentsJson = serializeAttachments(message.attachments),
+            searchSourcesJson = serializeSearchSources(message.searchSources)
         )
 
         private fun serializeAttachments(list: List<AttachmentMetadata>): String? {
@@ -93,6 +97,46 @@ data class ChatMessageEntity(
                                 AttachmentType.DOCUMENT
                             },
                             localUri = obj.optString("localUri").takeIf { it.isNotBlank() }
+                        )
+                    )
+                }
+                list
+            } catch (e: Exception) {
+                emptyList()
+            }
+        }
+
+        private fun serializeSearchSources(list: List<SearchSource>): String? {
+            if (list.isEmpty()) return null
+            val array = JSONArray()
+            for (item in list) {
+                val obj = JSONObject()
+                obj.put("title", item.title)
+                obj.put("url", item.url)
+                obj.put("domain", item.domain)
+                item.snippet?.let { obj.put("snippet", it) }
+                item.publicationDate?.let { obj.put("publicationDate", it) }
+                item.relevanceScore?.let { obj.put("relevanceScore", it.toDouble()) }
+                array.put(obj)
+            }
+            return array.toString()
+        }
+
+        private fun deserializeSearchSources(json: String?): List<SearchSource> {
+            if (json.isNullOrBlank()) return emptyList()
+            return try {
+                val array = JSONArray(json)
+                val list = mutableListOf<SearchSource>()
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    list.add(
+                        SearchSource(
+                            title = obj.optString("title"),
+                            url = obj.optString("url"),
+                            domain = obj.optString("domain", SearchSource.extractDomain(obj.optString("url"))),
+                            snippet = obj.optString("snippet").takeIf { it.isNotBlank() },
+                            publicationDate = obj.optString("publicationDate").takeIf { it.isNotBlank() },
+                            relevanceScore = if (obj.has("relevanceScore")) obj.optDouble("relevanceScore").toFloat() else null
                         )
                     )
                 }

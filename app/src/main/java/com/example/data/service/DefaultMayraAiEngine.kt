@@ -23,7 +23,8 @@ class DefaultMayraAiEngine : AiService {
         prompt: String,
         history: List<ChatMessage>,
         config: AiModelConfig,
-        attachments: List<Attachment>
+        attachments: List<Attachment>,
+        enableSearch: Boolean
     ): Result<String> {
         val trimmed = prompt.trim()
         val effectivePrompt = if (trimmed.isEmpty() && attachments.isNotEmpty()) {
@@ -56,7 +57,8 @@ class DefaultMayraAiEngine : AiService {
         prompt: String,
         history: List<ChatMessage>,
         config: AiModelConfig,
-        attachments: List<Attachment>
+        attachments: List<Attachment>,
+        enableSearch: Boolean
     ): Flow<AiStreamChunk> = flow {
         val trimmed = prompt.trim()
         val effectivePrompt = if (trimmed.isEmpty() && attachments.isNotEmpty()) {
@@ -65,6 +67,18 @@ class DefaultMayraAiEngine : AiService {
 
         if (effectivePrompt.isEmpty()) {
             throw IllegalArgumentException("Message content cannot be empty.")
+        }
+
+        if (enableSearch) {
+            emit(
+                AiStreamChunk(
+                    conversationId = conversationId,
+                    textDelta = "",
+                    isSearching = true,
+                    searchQueries = listOf(effectivePrompt)
+                )
+            )
+            delay(350)
         }
 
         // Realistic initial processing delay
@@ -90,11 +104,21 @@ class DefaultMayraAiEngine : AiService {
             delay(35)
         }
 
+        val simulatedSources = if (enableSearch) {
+            listOf(
+                com.example.domain.model.SearchSource(
+                    title = "Google Search",
+                    url = "https://www.google.com"
+                )
+            )
+        } else emptyList()
+
         emit(
             AiStreamChunk(
                 conversationId = conversationId,
                 textDelta = "",
-                isComplete = true
+                isComplete = true,
+                searchSources = simulatedSources
             )
         )
     }

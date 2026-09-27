@@ -3,9 +3,11 @@ package com.example.data.service
 import com.example.BuildConfig
 import com.example.domain.model.AiModelConfig
 import com.example.domain.model.AiStreamChunk
+import com.example.domain.model.Attachment
 import com.example.domain.model.ChatMessage
 import com.example.domain.model.MessageRole
 import com.example.domain.model.MessageStatus
+import com.example.domain.model.SearchSource
 import com.example.domain.service.AiService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -69,11 +71,12 @@ class GeminiService(
         prompt: String,
         history: List<ChatMessage>,
         config: AiModelConfig,
-        attachments: List<com.example.domain.model.Attachment>
+        attachments: List<com.example.domain.model.Attachment>,
+        enableSearch: Boolean
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
             val sb = StringBuilder()
-            generateStream(conversationId, prompt, history, config, attachments).collect { chunk ->
+            generateStream(conversationId, prompt, history, config, attachments, enableSearch).collect { chunk ->
                 if (!chunk.isComplete) {
                     sb.append(chunk.textDelta)
                 }
@@ -96,7 +99,8 @@ class GeminiService(
         prompt: String,
         history: List<ChatMessage>,
         config: AiModelConfig,
-        attachments: List<com.example.domain.model.Attachment>
+        attachments: List<com.example.domain.model.Attachment>,
+        enableSearch: Boolean
     ): Flow<AiStreamChunk> = flow {
         val apiKey = apiKeyProvider().trim()
         if (apiKey.isEmpty() || apiKey == PLACEHOLDER_KEY) {
@@ -114,7 +118,18 @@ class GeminiService(
             throw IllegalArgumentException("Message content or attachment cannot be empty.")
         }
 
-        val requestPayload = buildRequestJson(effectivePrompt, history, config, attachments)
+        // Notify UI that search grounding is active
+        if (enableSearch) {
+            emit(
+                AiStreamChunk(
+                    conversationId = conversationId,
+                    textDelta = "",
+                    isSearching = true
+                )
+            )
+        }
+
+        val requestPayload = buildRequestJson(effectivePrompt, history, config, attachments, enableSearch)
         val endpoint = "$BASE_URL/${config.modelId}:streamGenerateContent?alt=sse&key=$apiKey"
 
         val request = Request.Builder()
@@ -140,6 +155,8 @@ class GeminiService(
                         ?: throw IllegalStateException("Gemini server returned an empty response body.")
 
                     var receivedAnyChunk = false
+                    val accumulatedSources = mutableListOf<SearchSource>()
+                    val seenUrls = mutableSetOf<String>()
                     val reader = body.byteStream().bufferedReader(Charsets.UTF_8)
 
                     reader.use {
@@ -152,6 +169,31 @@ class GeminiService(
                             val jsonPayload = rawLine.removePrefix("data:").trim()
                             if (jsonPayload.isEmpty() || jsonPayload == "[DONE]") continue
 
+                            // 1. Parse grounding metadata (web search queries & chunks)
+                            val grounding = parseGroundingMetadata(jsonPayload)
+                            if (grounding != null) {
+                                val (queries, sources) = grounding
+                                val newSources = mutableListOf<SearchSource>()
+                                for (s in sources) {
+                                    if (seenUrls.add(s.url)) {
+                                        accumulatedSources.add(s)
+                                        newSources.add(s)
+                                    }
+                                }
+                                if (queries.isNotEmpty() || newSources.isNotEmpty()) {
+                                    emit(
+                                        AiStreamChunk(
+                                            conversationId = conversationId,
+                                            textDelta = "",
+                                            searchQueries = queries,
+                                            searchSources = accumulatedSources.toList(),
+                                            isSearching = false
+                                        )
+                                    )
+                                }
+                            }
+
+                            // 2. Parse text delta
                             val deltaText = parseTextDelta(jsonPayload)
                             if (!deltaText.isNullOrEmpty()) {
                                 receivedAnyChunk = true
@@ -159,7 +201,8 @@ class GeminiService(
                                     AiStreamChunk(
                                         conversationId = conversationId,
                                         textDelta = deltaText,
-                                        isComplete = false
+                                        isComplete = false,
+                                        searchSources = accumulatedSources.toList()
                                     )
                                 )
                             }
@@ -174,7 +217,8 @@ class GeminiService(
                         AiStreamChunk(
                             conversationId = conversationId,
                             textDelta = "",
-                            isComplete = true
+                            isComplete = true,
+                            searchSources = accumulatedSources.toList()
                         )
                     )
                     streamSuccess = true
@@ -213,7 +257,8 @@ class GeminiService(
         prompt: String,
         history: List<ChatMessage>,
         config: AiModelConfig,
-        attachments: List<com.example.domain.model.Attachment> = emptyList()
+        attachments: List<com.example.domain.model.Attachment> = emptyList(),
+        enableSearch: Boolean = false
     ): JSONObject {
         val root = JSONObject()
 
@@ -232,7 +277,15 @@ class GeminiService(
         genConfig.put("maxOutputTokens", config.maxTokens)
         root.put("generationConfig", genConfig)
 
-        // 3. Contents (History turns + newest user prompt & multimodal attachments)
+        // 3. Web Search Grounding Tool
+        if (enableSearch) {
+            val toolsArray = JSONArray()
+            val searchTool = JSONObject().put("google_search", JSONObject())
+            toolsArray.put(searchTool)
+            root.put("tools", toolsArray)
+        }
+
+        // 4. Contents (History turns + newest user prompt & multimodal attachments)
         val contentsArray = JSONArray()
 
         // Collect prior history messages
@@ -328,6 +381,49 @@ class GeminiService(
                 }
             }
             if (sb.isNotEmpty()) sb.toString() else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Extracts web search queries and grounding chunk sources from Gemini's candidate metadata.
+     */
+    private fun parseGroundingMetadata(jsonStr: String): Pair<List<String>, List<SearchSource>>? {
+        return try {
+            val root = JSONObject(jsonStr)
+            val candidates = root.optJSONArray("candidates") ?: return null
+            val firstCandidate = candidates.optJSONObject(0) ?: return null
+            val groundingMetadata = firstCandidate.optJSONObject("groundingMetadata") ?: return null
+
+            val queries = mutableListOf<String>()
+            val queriesArray = groundingMetadata.optJSONArray("webSearchQueries")
+            if (queriesArray != null) {
+                for (i in 0 until queriesArray.length()) {
+                    val q = queriesArray.optString(i)
+                    if (q.isNotBlank()) queries.add(q)
+                }
+            }
+
+            val sources = mutableListOf<SearchSource>()
+            val chunksArray = groundingMetadata.optJSONArray("groundingChunks")
+            if (chunksArray != null) {
+                for (i in 0 until chunksArray.length()) {
+                    val chunk = chunksArray.optJSONObject(i) ?: continue
+                    val web = chunk.optJSONObject("web") ?: continue
+                    val uri = web.optString("uri")
+                    val title = web.optString("title")
+                    if (uri.isNotBlank()) {
+                        sources.add(
+                            SearchSource(
+                                title = if (title.isNotBlank()) title else SearchSource.extractDomain(uri),
+                                url = uri
+                            )
+                        )
+                    }
+                }
+            }
+            Pair(queries, sources)
         } catch (e: Exception) {
             null
         }

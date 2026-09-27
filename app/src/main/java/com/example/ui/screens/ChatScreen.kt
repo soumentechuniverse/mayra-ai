@@ -146,7 +146,7 @@ fun ChatScreen(
                                     .padding(horizontal = 14.dp, vertical = 6.dp),
                                 contentAlignment = Alignment.CenterStart
                             ) {
-                                ThinkingIndicator()
+                                ThinkingIndicator(searchPhase = state.searchPhase)
                             }
                         }
                     }
@@ -169,7 +169,9 @@ fun ChatScreen(
         onTemperatureChanged = { onEvent(ChatUiEvent.TemperatureChanged(it)) },
         onToggleTheme = { onEvent(ChatUiEvent.ToggleTheme) },
         onClearChat = { onEvent(ChatUiEvent.ClearCurrentChat) },
-        onDismiss = { onEvent(ChatUiEvent.CloseSettings) }
+        onDismiss = { onEvent(ChatUiEvent.CloseSettings) },
+        searchMode = state.searchMode,
+        onSearchModeChanged = { onEvent(ChatUiEvent.SearchModeChanged(it)) }
     )
 
     // Modal History Sheet Architecture

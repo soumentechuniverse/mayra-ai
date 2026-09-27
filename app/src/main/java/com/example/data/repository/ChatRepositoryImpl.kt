@@ -3,12 +3,16 @@ package com.example.data.repository
 import com.example.data.local.dao.ConversationDao
 import com.example.data.local.entity.ChatMessageEntity
 import com.example.data.local.entity.ConversationEntity
+import com.example.data.service.DefaultSearchIntentDetector
 import com.example.domain.model.AiModelConfig
 import com.example.domain.model.ChatMessage
 import com.example.domain.model.Conversation
 import com.example.domain.model.MessageRole
 import com.example.domain.model.MessageStatus
+import com.example.domain.model.SearchPhase
+import com.example.domain.model.SearchSource
 import com.example.domain.service.AiService
+import com.example.domain.service.SearchIntentDetector
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,6 +27,7 @@ import java.util.UUID
 class ChatRepositoryImpl(
     private val aiService: AiService,
     private val conversationDao: ConversationDao? = null,
+    private val searchIntentDetector: SearchIntentDetector = DefaultSearchIntentDetector(),
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 ) : ChatRepository {
 
@@ -37,6 +42,9 @@ class ChatRepositoryImpl(
 
     private val _isGenerating = MutableStateFlow(false)
     override val isGenerating: StateFlow<Boolean> = _isGenerating.asStateFlow()
+
+    private val _searchPhase = MutableStateFlow(SearchPhase.IDLE)
+    override val searchPhase: StateFlow<SearchPhase> = _searchPhase.asStateFlow()
 
     private var activeGenerationJob: Job? = null
 
@@ -93,6 +101,7 @@ class ChatRepositoryImpl(
         activeGenerationJob?.cancel()
         activeGenerationJob = null
         _isGenerating.value = false
+        _searchPhase.value = SearchPhase.IDLE
     }
 
     override suspend fun sendMessage(
@@ -141,7 +150,15 @@ class ChatRepositoryImpl(
         _messages.value = _messages.value + userMessage
         persistMessage(userMessage, conv)
 
-        return executeAiStreaming(conv, trimmed, config, attachments)
+        // Detect whether current web information is required
+        val decision = searchIntentDetector.detect(
+            query = trimmed,
+            mode = config.searchMode,
+            hasAttachments = attachments.isNotEmpty()
+        )
+        val enableSearch = decision.needsSearch
+
+        return executeAiStreaming(conv, trimmed, config, attachments, enableSearch)
     }
 
     override suspend fun retryLastFailed(config: AiModelConfig): Result<ChatMessage> {
@@ -163,49 +180,83 @@ class ChatRepositoryImpl(
         _messages.value = updated
 
         val conv = _activeConversation.value ?: startNewConversation()
-        return executeAiStreaming(conv, userMsg.content, config, emptyList())
+        val decision = searchIntentDetector.detect(
+            query = userMsg.content,
+            mode = config.searchMode,
+            hasAttachments = userMsg.attachments.isNotEmpty()
+        )
+        return executeAiStreaming(conv, userMsg.content, config, emptyList(), decision.needsSearch)
     }
 
     private suspend fun executeAiStreaming(
         conv: Conversation,
         prompt: String,
         config: AiModelConfig,
-        attachments: List<com.example.domain.model.Attachment> = emptyList()
+        attachments: List<com.example.domain.model.Attachment> = emptyList(),
+        enableSearch: Boolean = false
     ): Result<ChatMessage> {
         _isGenerating.value = true
+        if (enableSearch) {
+            _searchPhase.value = SearchPhase.SEARCHING
+        } else {
+            _searchPhase.value = SearchPhase.IDLE
+        }
         val assistantMsgId = UUID.randomUUID().toString()
         var hasAddedAssistantMsg = false
         val textAccumulator = StringBuilder()
+        val accumulatedSources = mutableListOf<SearchSource>()
         var failureResult: Throwable? = null
         var completedMessage: ChatMessage? = null
 
         val job = scope.launch {
             try {
                 val historySnapshot = _messages.value
-                aiService.generateStream(conv.id, prompt, historySnapshot, config, attachments)
+                aiService.generateStream(conv.id, prompt, historySnapshot, config, attachments, enableSearch)
                     .collect { chunk ->
+                        if (chunk.isSearching) {
+                            _searchPhase.value = SearchPhase.SEARCHING
+                        } else if (chunk.searchQueries.isNotEmpty() || chunk.searchSources.isNotEmpty()) {
+                            _searchPhase.value = SearchPhase.READING_SOURCES
+                        }
+
+                        if (chunk.searchSources.isNotEmpty()) {
+                            for (s in chunk.searchSources) {
+                                if (accumulatedSources.none { it.url == s.url }) {
+                                    accumulatedSources.add(s)
+                                }
+                            }
+                        }
+
                         if (!chunk.isComplete) {
-                            textAccumulator.append(chunk.textDelta)
-                            val currentText = textAccumulator.toString()
-                            if (!hasAddedAssistantMsg) {
-                                hasAddedAssistantMsg = true
-                                val assistantMessage = ChatMessage(
-                                    id = assistantMsgId,
-                                    conversationId = conv.id,
-                                    role = MessageRole.ASSISTANT,
-                                    content = currentText,
-                                    timestamp = System.currentTimeMillis(),
-                                    status = MessageStatus.SENDING
-                                )
-                                _messages.value = _messages.value + assistantMessage
-                            } else {
-                                _messages.value = _messages.value.map { msg ->
-                                    if (msg.id == assistantMsgId) {
-                                        msg.copy(content = currentText)
-                                    } else msg
+                            if (chunk.textDelta.isNotEmpty()) {
+                                _searchPhase.value = SearchPhase.GENERATING
+                                textAccumulator.append(chunk.textDelta)
+                                val currentText = textAccumulator.toString()
+                                if (!hasAddedAssistantMsg) {
+                                    hasAddedAssistantMsg = true
+                                    val assistantMessage = ChatMessage(
+                                        id = assistantMsgId,
+                                        conversationId = conv.id,
+                                        role = MessageRole.ASSISTANT,
+                                        content = currentText,
+                                        timestamp = System.currentTimeMillis(),
+                                        status = MessageStatus.SENDING,
+                                        searchSources = accumulatedSources.toList()
+                                    )
+                                    _messages.value = _messages.value + assistantMessage
+                                } else {
+                                    _messages.value = _messages.value.map { msg ->
+                                        if (msg.id == assistantMsgId) {
+                                            msg.copy(
+                                                content = currentText,
+                                                searchSources = accumulatedSources.toList()
+                                            )
+                                        } else msg
+                                    }
                                 }
                             }
                         } else {
+                            _searchPhase.value = SearchPhase.IDLE
                             val finalContent = textAccumulator.toString().trim()
                             val finalMsg = ChatMessage(
                                 id = assistantMsgId,
@@ -213,7 +264,8 @@ class ChatRepositoryImpl(
                                 role = MessageRole.ASSISTANT,
                                 content = finalContent,
                                 timestamp = System.currentTimeMillis(),
-                                status = MessageStatus.SENT
+                                status = MessageStatus.SENT,
+                                searchSources = accumulatedSources.toList()
                             )
                             completedMessage = finalMsg
                             _messages.value = _messages.value.map { msg ->
@@ -223,6 +275,7 @@ class ChatRepositoryImpl(
                         }
                     }
             } catch (e: CancellationException) {
+                _searchPhase.value = SearchPhase.IDLE
                 if (hasAddedAssistantMsg && textAccumulator.isNotEmpty()) {
                     val partialMsg = ChatMessage(
                         id = assistantMsgId,
@@ -230,7 +283,8 @@ class ChatRepositoryImpl(
                         role = MessageRole.ASSISTANT,
                         content = textAccumulator.toString().trim(),
                         timestamp = System.currentTimeMillis(),
-                        status = MessageStatus.SENT
+                        status = MessageStatus.SENT,
+                        searchSources = accumulatedSources.toList()
                     )
                     _messages.value = _messages.value.map { msg ->
                         if (msg.id == assistantMsgId) partialMsg else msg
@@ -239,6 +293,7 @@ class ChatRepositoryImpl(
                 }
                 throw e
             } catch (e: Exception) {
+                _searchPhase.value = SearchPhase.IDLE
                 failureResult = e
                 val errorText = e.localizedMessage ?: "Failed to generate response."
                 if (hasAddedAssistantMsg && textAccumulator.isNotEmpty()) {
@@ -249,7 +304,8 @@ class ChatRepositoryImpl(
                         content = textAccumulator.toString(),
                         timestamp = System.currentTimeMillis(),
                         status = MessageStatus.ERROR,
-                        errorMessage = errorText
+                        errorMessage = errorText,
+                        searchSources = accumulatedSources.toList()
                     )
                     _messages.value = _messages.value.map { msg ->
                         if (msg.id == assistantMsgId) partialErrorMsg else msg
@@ -268,6 +324,7 @@ class ChatRepositoryImpl(
                 }
             } finally {
                 _isGenerating.value = false
+                _searchPhase.value = SearchPhase.IDLE
             }
         }
 
