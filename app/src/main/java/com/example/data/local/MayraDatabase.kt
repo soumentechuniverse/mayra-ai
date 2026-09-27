@@ -13,7 +13,7 @@ import com.example.data.local.entity.ConversationEntity
         ConversationEntity::class,
         ChatMessageEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class MayraDatabase : RoomDatabase() {

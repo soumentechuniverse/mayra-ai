@@ -2,23 +2,24 @@ package com.example.domain.service
 
 import com.example.domain.model.AiModelConfig
 import com.example.domain.model.AiStreamChunk
+import com.example.domain.model.Attachment
 import com.example.domain.model.ChatMessage
 import kotlinx.coroutines.flow.Flow
 
 /**
  * Clean architectural abstraction for AI model execution.
- * Allows effortless swapping or hybrid combining of cloud AI APIs (e.g. Gemini, Anthropic, OpenAI),
- * local on-device models, or mock implementations without modifying ViewModel or UI layers.
+ * Supports text, multimodal images, PDFs, and document files.
  */
 interface AiService {
     /**
-     * Executes a one-shot completion for the given conversation and prompt.
+     * Executes a one-shot completion for the given conversation, prompt, and optional attachments.
      */
     suspend fun generateResponse(
         conversationId: String,
         prompt: String,
         history: List<ChatMessage>,
-        config: AiModelConfig
+        config: AiModelConfig,
+        attachments: List<Attachment> = emptyList()
     ): Result<String>
 
     /**
@@ -28,7 +29,8 @@ interface AiService {
         conversationId: String,
         prompt: String,
         history: List<ChatMessage>,
-        config: AiModelConfig
+        config: AiModelConfig,
+        attachments: List<Attachment> = emptyList()
     ): Flow<AiStreamChunk>
 
     /**

@@ -1,0 +1,191 @@
+package com.example.util
+
+import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
+import android.util.Base64
+import android.webkit.MimeTypeMap
+import com.example.domain.model.Attachment
+import com.example.domain.model.AttachmentMetadata
+import com.example.domain.model.AttachmentType
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import java.util.Locale
+import java.util.UUID
+
+object AttachmentHelper {
+
+    const val MAX_FILE_SIZE_BYTES = 10L * 1024 * 1024 // 10 MB limit
+    private const val MAX_TEXT_CHARS = 250_000 // ~250k chars for text files
+
+    private val SUPPORTED_IMAGE_MIMES = setOf(
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+        "image/webp"
+    )
+
+    private val SUPPORTED_DOC_EXTENSIONS = setOf(
+        "txt", "md", "csv", "json", "xml", "html", "htm", "log",
+        "kt", "java", "py", "js", "ts", "cpp", "c", "h", "css", "yaml", "yml"
+    )
+
+    /**
+     * Resolves a Uri into an in-memory [Attachment] with validated Base64 or text content.
+     */
+    suspend fun processUri(context: Context, uri: Uri): Result<Attachment> = withContext(Dispatchers.IO) {
+        try {
+            val fileName = queryFileName(context, uri) ?: "attachment_${System.currentTimeMillis()}"
+            val extension = getExtension(fileName).lowercase(Locale.ROOT)
+            val detectedMime = detectMimeType(context, uri, extension)
+
+            val (attachmentType, normalizedMime) = resolveAttachmentType(detectedMime, extension)
+                ?: return@withContext Result.failure(
+                    IllegalArgumentException("এই ফাইলটি সমর্থিত নয়। ($fileName) / Unsupported file type.")
+                )
+
+            val fileSize = queryFileSize(context, uri)
+            if (fileSize > MAX_FILE_SIZE_BYTES) {
+                return@withContext Result.failure(
+                    IllegalArgumentException("ফাইলটি খুব বড় (সর্বোচ্চ ১০MB)। অন্য একটি ছোট ফাইল চেষ্টা করুন। / File too large (max 10MB).")
+                )
+            }
+
+            val inputStream = context.contentResolver.openInputStream(uri)
+                ?: return@withContext Result.failure(
+                    IllegalStateException("ফাইলটি পড়া যায়নি। আবার চেষ্টা করুন। / Could not open file.")
+                )
+
+            val bytes = inputStream.use { readBytesWithLimit(it, MAX_FILE_SIZE_BYTES) }
+            if (bytes.isEmpty()) {
+                return@withContext Result.failure(
+                    IllegalArgumentException("ফাইলটি খালি। / File is empty.")
+                )
+            }
+
+            val base64Data = Base64.encodeToString(bytes, Base64.NO_WRAP)
+            val textContent = if (attachmentType == AttachmentType.DOCUMENT) {
+                try {
+                    String(bytes, Charsets.UTF_8).take(MAX_TEXT_CHARS)
+                } catch (e: Exception) {
+                    null
+                }
+            } else null
+
+            val metadata = AttachmentMetadata(
+                id = UUID.randomUUID().toString(),
+                name = fileName,
+                mimeType = normalizedMime,
+                sizeBytes = bytes.size.toLong(),
+                type = attachmentType,
+                localUri = uri.toString()
+            )
+
+            Result.success(
+                Attachment(
+                    metadata = metadata,
+                    base64Data = base64Data,
+                    textContent = textContent
+                )
+            )
+        } catch (e: IllegalArgumentException) {
+            Result.failure(e)
+        } catch (e: Exception) {
+            Result.failure(
+                IllegalStateException("ফাইলটি প্রক্রিয়া করতে ব্যর্থ হয়েছে: ${e.localizedMessage ?: "Unknown error"}")
+            )
+        }
+    }
+
+    private fun resolveAttachmentType(mime: String, extension: String): Pair<AttachmentType, String>? {
+        val lowerMime = mime.lowercase(Locale.ROOT)
+        return when {
+            SUPPORTED_IMAGE_MIMES.contains(lowerMime) -> {
+                val normalized = if (lowerMime == "image/jpg") "image/jpeg" else lowerMime
+                Pair(AttachmentType.IMAGE, normalized)
+            }
+            lowerMime == "application/pdf" || extension == "pdf" -> {
+                Pair(AttachmentType.PDF, "application/pdf")
+            }
+            lowerMime.startsWith("text/") ||
+            lowerMime == "application/json" ||
+            SUPPORTED_DOC_EXTENSIONS.contains(extension) -> {
+                val finalMime = if (lowerMime.startsWith("text/")) lowerMime else "text/plain"
+                Pair(AttachmentType.DOCUMENT, finalMime)
+            }
+            else -> null
+        }
+    }
+
+    private fun detectMimeType(context: Context, uri: Uri, extension: String): String {
+        val fromResolver = context.contentResolver.getType(uri)
+        if (!fromResolver.isNullOrBlank()) {
+            return fromResolver
+        }
+        if (extension.isNotEmpty()) {
+            val fromExtension = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+            if (!fromExtension.isNullOrBlank()) {
+                return fromExtension
+            }
+        }
+        return "application/octet-stream"
+    }
+
+    private fun queryFileName(context: Context, uri: Uri): String? {
+        if (uri.scheme == "content") {
+            try {
+                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (nameIndex != -1 && cursor.moveToFirst()) {
+                        return cursor.getString(nameIndex)
+                    }
+                }
+            } catch (e: Exception) {
+                // Fall through to lastPathSegment
+            }
+        }
+        return uri.lastPathSegment
+    }
+
+    private fun queryFileSize(context: Context, uri: Uri): Long {
+        if (uri.scheme == "content") {
+            try {
+                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    if (sizeIndex != -1 && cursor.moveToFirst()) {
+                        return cursor.getLong(sizeIndex)
+                    }
+                }
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
+        return 0L
+    }
+
+    private fun readBytesWithLimit(stream: InputStream, limit: Long): ByteArray {
+        val buffer = ByteArray(8192)
+        val baos = ByteArrayOutputStream()
+        var totalRead = 0L
+        var read: Int
+        while (stream.read(buffer).also { read = it } != -1) {
+            totalRead += read
+            if (totalRead > limit) {
+                throw IllegalArgumentException("ফাইলটি খুব বড় (সর্বোচ্চ ১০MB)। / File exceeds 10MB limit.")
+            }
+            baos.write(buffer, 0, read)
+        }
+        return baos.toByteArray()
+    }
+
+    private fun getExtension(fileName: String): String {
+        val lastDot = fileName.lastIndexOf('.')
+        return if (lastDot != -1 && lastDot < fileName.length - 1) {
+            fileName.substring(lastDot + 1)
+        } else {
+            ""
+        }
+    }
+}

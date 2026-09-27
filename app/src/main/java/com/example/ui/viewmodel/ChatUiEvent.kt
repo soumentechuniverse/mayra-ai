@@ -18,6 +18,11 @@ sealed interface ChatUiEvent {
     data object CloseHistory : ChatUiEvent
     data object ToggleTheme : ChatUiEvent
     data object AttachmentPlaceholderClicked : ChatUiEvent
+    data object OpenAttachmentPicker : ChatUiEvent
+    data object CloseAttachmentPicker : ChatUiEvent
+    data class AttachmentsSelected(val attachments: List<com.example.domain.model.Attachment>) : ChatUiEvent
+    data class RemovePendingAttachment(val attachmentId: String) : ChatUiEvent
+    data class AttachmentError(val errorMessage: String) : ChatUiEvent
     data object VoicePlaceholderClicked : ChatUiEvent
     data object ClearCurrentChat : ChatUiEvent
     data class DismissSnackbar(val message: String? = null) : ChatUiEvent

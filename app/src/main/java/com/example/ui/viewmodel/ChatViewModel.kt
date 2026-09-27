@@ -21,6 +21,8 @@ class ChatViewModel(
     private val _isDarkTheme = MutableStateFlow(true)
     private val _isSettingsOpen = MutableStateFlow(false)
     private val _isHistoryOpen = MutableStateFlow(false)
+    private val _isAttachmentPickerOpen = MutableStateFlow(false)
+    private val _pendingAttachments = MutableStateFlow<List<com.example.domain.model.Attachment>>(emptyList())
     private val _snackbarMessage = MutableStateFlow<String?>(null)
     private val _bannerError = MutableStateFlow<String?>(null)
 
@@ -34,6 +36,8 @@ class ChatViewModel(
         _isDarkTheme,
         _isSettingsOpen,
         _isHistoryOpen,
+        _isAttachmentPickerOpen,
+        _pendingAttachments,
         _snackbarMessage,
         _bannerError
     ) { args: Array<Any?> ->
@@ -48,8 +52,10 @@ class ChatViewModel(
             isDarkTheme = args[6] as? Boolean ?: true,
             isSettingsOpen = args[7] as? Boolean ?: false,
             isHistoryOpen = args[8] as? Boolean ?: false,
-            snackbarMessage = args[9] as? String,
-            bannerError = args[10] as? String
+            isAttachmentPickerOpen = args[9] as? Boolean ?: false,
+            pendingAttachments = args[10] as? List<com.example.domain.model.Attachment> ?: emptyList(),
+            snackbarMessage = args[11] as? String,
+            bannerError = args[12] as? String
         )
     }.stateIn(
         scope = viewModelScope,
@@ -65,14 +71,16 @@ class ChatViewModel(
 
             ChatUiEvent.SendClicked -> {
                 val currentText = _inputText.value.trim()
-                if (currentText.isEmpty()) {
-                    _snackbarMessage.value = "Please enter a message."
+                val attachments = _pendingAttachments.value
+                if (currentText.isEmpty() && attachments.isEmpty()) {
+                    _snackbarMessage.value = "Please enter a message or attach a file."
                     return
                 }
                 _inputText.value = ""
+                _pendingAttachments.value = emptyList()
                 _bannerError.value = null
                 viewModelScope.launch {
-                    val result = repository.sendMessage(currentText, _selectedModel.value)
+                    val result = repository.sendMessage(currentText, _selectedModel.value, attachments)
                     if (result.isFailure) {
                         _bannerError.value = result.exceptionOrNull()?.localizedMessage
                             ?: "Mayra AI service request failed. Tap retry to reconnect."
@@ -142,8 +150,27 @@ class ChatViewModel(
 
             ChatUiEvent.ToggleTheme -> _isDarkTheme.value = !_isDarkTheme.value
 
-            ChatUiEvent.AttachmentPlaceholderClicked -> {
-                _snackbarMessage.value = "Document & image attachments will be enabled in the upcoming update."
+            ChatUiEvent.AttachmentPlaceholderClicked,
+            ChatUiEvent.OpenAttachmentPicker -> {
+                _isAttachmentPickerOpen.value = true
+            }
+
+            ChatUiEvent.CloseAttachmentPicker -> {
+                _isAttachmentPickerOpen.value = false
+            }
+
+            is ChatUiEvent.AttachmentsSelected -> {
+                _pendingAttachments.value = _pendingAttachments.value + event.attachments
+                _isAttachmentPickerOpen.value = false
+            }
+
+            is ChatUiEvent.RemovePendingAttachment -> {
+                _pendingAttachments.value = _pendingAttachments.value.filter { it.id != event.attachmentId }
+            }
+
+            is ChatUiEvent.AttachmentError -> {
+                _bannerError.value = event.errorMessage
+                _isAttachmentPickerOpen.value = false
             }
 
             ChatUiEvent.VoicePlaceholderClicked -> {

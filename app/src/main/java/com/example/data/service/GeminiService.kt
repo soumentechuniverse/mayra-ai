@@ -68,11 +68,12 @@ class GeminiService(
         conversationId: String,
         prompt: String,
         history: List<ChatMessage>,
-        config: AiModelConfig
+        config: AiModelConfig,
+        attachments: List<com.example.domain.model.Attachment>
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
             val sb = StringBuilder()
-            generateStream(conversationId, prompt, history, config).collect { chunk ->
+            generateStream(conversationId, prompt, history, config, attachments).collect { chunk ->
                 if (!chunk.isComplete) {
                     sb.append(chunk.textDelta)
                 }
@@ -94,7 +95,8 @@ class GeminiService(
         conversationId: String,
         prompt: String,
         history: List<ChatMessage>,
-        config: AiModelConfig
+        config: AiModelConfig,
+        attachments: List<com.example.domain.model.Attachment>
     ): Flow<AiStreamChunk> = flow {
         val apiKey = apiKeyProvider().trim()
         if (apiKey.isEmpty() || apiKey == PLACEHOLDER_KEY) {
@@ -104,11 +106,15 @@ class GeminiService(
         }
 
         val trimmedPrompt = prompt.trim()
-        if (trimmedPrompt.isEmpty()) {
-            throw IllegalArgumentException("Message content cannot be empty.")
+        val effectivePrompt = if (trimmedPrompt.isEmpty() && attachments.isNotEmpty()) {
+            resolveDefaultPrompt(attachments)
+        } else trimmedPrompt
+
+        if (effectivePrompt.isEmpty()) {
+            throw IllegalArgumentException("Message content or attachment cannot be empty.")
         }
 
-        val requestPayload = buildRequestJson(trimmedPrompt, history, config)
+        val requestPayload = buildRequestJson(effectivePrompt, history, config, attachments)
         val endpoint = "$BASE_URL/${config.modelId}:streamGenerateContent?alt=sse&key=$apiKey"
 
         val request = Request.Builder()
@@ -189,14 +195,25 @@ class GeminiService(
         }
     }.flowOn(Dispatchers.IO)
 
+    private fun resolveDefaultPrompt(attachments: List<com.example.domain.model.Attachment>): String {
+        val allImages = attachments.isNotEmpty() && attachments.all { it.type == com.example.domain.model.AttachmentType.IMAGE }
+        val allPdfs = attachments.isNotEmpty() && attachments.all { it.type == com.example.domain.model.AttachmentType.PDF }
+        return when {
+            allImages -> "Analyze this image and describe what you can understand from it."
+            allPdfs -> "Analyze this document and describe what you can understand from it."
+            else -> "Analyze this document and explain the key information."
+        }
+    }
+
     /**
      * Constructs the standard Gemini API JSON payload with systemInstruction,
-     * generationConfig, and properly sequenced user/model history turns.
+     * generationConfig, multimodal attachment parts, and properly sequenced user/model history turns.
      */
     private fun buildRequestJson(
         prompt: String,
         history: List<ChatMessage>,
-        config: AiModelConfig
+        config: AiModelConfig,
+        attachments: List<com.example.domain.model.Attachment> = emptyList()
     ): JSONObject {
         val root = JSONObject()
 
@@ -215,15 +232,16 @@ class GeminiService(
         genConfig.put("maxOutputTokens", config.maxTokens)
         root.put("generationConfig", genConfig)
 
-        // 3. Contents (History turns + newest user prompt)
+        // 3. Contents (History turns + newest user prompt & multimodal attachments)
         val contentsArray = JSONArray()
-        val turns = mutableListOf<Pair<String, String>>()
 
-        // Filter and collect prior messages
+        // Collect prior history messages
+        val historyTurns = mutableListOf<Pair<String, List<JSONObject>>>()
+
         for (msg in history) {
             if (msg.status == MessageStatus.ERROR) continue
-            val text = msg.content.trim()
-            if (text.isEmpty()) continue
+            val rawText = msg.content.trim()
+            if (rawText.isEmpty() && msg.attachments.isEmpty()) continue
 
             val role = when (msg.role) {
                 MessageRole.USER -> "user"
@@ -231,41 +249,60 @@ class GeminiService(
                 MessageRole.SYSTEM -> continue
             }
 
-            if (turns.isNotEmpty() && turns.last().first == role) {
-                // Merge consecutive turns of identical role
-                val last = turns.removeAt(turns.lastIndex)
-                turns.add(Pair(role, "${last.second}\n\n$text"))
-            } else {
-                turns.add(Pair(role, text))
-            }
+            val displayText = if (msg.attachments.isNotEmpty()) {
+                val attNames = msg.attachments.joinToString { it.name }
+                if (rawText.isEmpty()) "[Attached: $attNames]" else "[Attached: $attNames]\n$rawText"
+            } else rawText
+
+            val part = JSONObject().put("text", displayText)
+            historyTurns.add(Pair(role, listOf(part)))
         }
 
-        // Ensure the newest user prompt is the final turn
-        val trimmedPrompt = prompt.trim()
-        if (trimmedPrompt.isNotEmpty()) {
-            if (turns.isEmpty() || turns.last().first != "user" || turns.last().second != trimmedPrompt) {
-                if (turns.isNotEmpty() && turns.last().first == "user") {
-                    val last = turns.removeAt(turns.lastIndex)
-                    turns.add(Pair("user", "${last.second}\n\n$trimmedPrompt"))
-                } else {
-                    turns.add(Pair("user", trimmedPrompt))
-                }
-            }
+        // Gemini requires the sequence to start with a 'user' turn
+        while (historyTurns.isNotEmpty() && historyTurns.first().first != "user") {
+            historyTurns.removeAt(0)
         }
 
-        // Gemini requires the conversation sequence to begin with a 'user' turn
-        while (turns.isNotEmpty() && turns.first().first != "user") {
-            turns.removeAt(0)
-        }
-
-        for ((role, text) in turns) {
+        // Add history turns
+        for ((role, parts) in historyTurns) {
             val turnObj = JSONObject()
             turnObj.put("role", role)
             val partsArray = JSONArray()
-            partsArray.put(JSONObject().put("text", text))
+            for (p in parts) {
+                partsArray.put(p)
+            }
             turnObj.put("parts", partsArray)
             contentsArray.put(turnObj)
         }
+
+        // Add active current turn
+        val currentTurn = JSONObject()
+        currentTurn.put("role", "user")
+        val currentParts = JSONArray()
+
+        for (att in attachments) {
+            if (!att.base64Data.isNullOrBlank()) {
+                val inlineData = JSONObject()
+                inlineData.put("mimeType", att.mimeType)
+                inlineData.put("data", att.base64Data)
+                currentParts.put(JSONObject().put("inlineData", inlineData))
+            } else if (!att.textContent.isNullOrBlank()) {
+                currentParts.put(JSONObject().put("text", "[Document: ${att.name}]\n${att.textContent}"))
+            }
+        }
+
+        val trimmedPrompt = prompt.trim()
+        val textToInclude = if (trimmedPrompt.isNotEmpty()) {
+            trimmedPrompt
+        } else if (attachments.isNotEmpty()) {
+            resolveDefaultPrompt(attachments)
+        } else {
+            "Hello"
+        }
+
+        currentParts.put(JSONObject().put("text", textToInclude))
+        currentTurn.put("parts", currentParts)
+        contentsArray.put(currentTurn)
 
         root.put("contents", contentsArray)
         return root

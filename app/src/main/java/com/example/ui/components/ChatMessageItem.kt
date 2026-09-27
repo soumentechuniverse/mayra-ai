@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -50,6 +51,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.PictureAsPdf
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextOverflow
+import coil.compose.AsyncImage
+import com.example.domain.model.AttachmentMetadata
+import com.example.domain.model.AttachmentType
 import com.example.domain.model.ChatMessage
 import com.example.domain.model.MessageRole
 import com.example.domain.model.MessageStatus
@@ -124,16 +133,32 @@ fun ChatMessageItem(
                                     bottomEnd = 4.dp
                                 )
                             )
-                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
                     ) {
-                        Text(
-                            text = message.content,
-                            style = MaterialTheme.typography.bodyLarge.copy(
-                                textDirection = TextDirection.ContentOrLtr,
-                                lineHeight = 22.sp
-                            ),
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
+                        Column {
+                            // Attachments display
+                            if (message.attachments.isNotEmpty()) {
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.padding(bottom = if (message.content.isNotBlank()) 8.dp else 0.dp)
+                                ) {
+                                    for (att in message.attachments) {
+                                        UserAttachmentPreview(attachment = att)
+                                    }
+                                }
+                            }
+
+                            if (message.content.isNotBlank()) {
+                                Text(
+                                    text = message.content,
+                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                        textDirection = TextDirection.ContentOrLtr,
+                                        lineHeight = 22.sp
+                                    ),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(4.dp))
@@ -309,4 +334,141 @@ fun ChatMessageItem(
 private fun formatTime(timestamp: Long): String {
     val formatter = SimpleDateFormat("h:mm a", Locale.getDefault())
     return formatter.format(Date(timestamp))
+}
+
+@Composable
+private fun UserAttachmentPreview(
+    attachment: AttachmentMetadata,
+    modifier: Modifier = Modifier
+) {
+    when (attachment.type) {
+        AttachmentType.IMAGE -> {
+            if (!attachment.localUri.isNullOrBlank()) {
+                Box(
+                    modifier = modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .border(1.dp, MayraCyan.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                ) {
+                    AsyncImage(
+                        model = attachment.localUri,
+                        contentDescription = attachment.name,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 200.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                    )
+                }
+            } else {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MayraDarkSurfaceElevated)
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Image,
+                        contentDescription = null,
+                        tint = MayraCyan,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        text = attachment.name,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+        AttachmentType.PDF -> {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xFF26131D))
+                    .border(1.dp, MayraRose.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(MayraRose.copy(alpha = 0.2f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.PictureAsPdf,
+                        contentDescription = null,
+                        tint = MayraRose,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = attachment.name,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (attachment.formattedSize.isNotEmpty()) {
+                        Text(
+                            text = attachment.formattedSize,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MayraRose.copy(alpha = 0.8f)
+                        )
+                    }
+                }
+            }
+        }
+        AttachmentType.DOCUMENT -> {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xFF131E33))
+                    .border(1.dp, MayraCyan.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(MayraCyan.copy(alpha = 0.2f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Description,
+                        contentDescription = null,
+                        tint = MayraCyan,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = attachment.name,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (attachment.formattedSize.isNotEmpty()) {
+                        Text(
+                            text = attachment.formattedSize,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MayraCyan.copy(alpha = 0.8f)
+                        )
+                    }
+                }
+            }
+        }
+    }
 }

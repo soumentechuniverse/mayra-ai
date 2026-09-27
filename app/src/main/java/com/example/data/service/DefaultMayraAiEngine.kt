@@ -2,6 +2,7 @@ package com.example.data.service
 
 import com.example.domain.model.AiModelConfig
 import com.example.domain.model.AiStreamChunk
+import com.example.domain.model.Attachment
 import com.example.domain.model.ChatMessage
 import com.example.domain.service.AiService
 import kotlinx.coroutines.delay
@@ -10,12 +11,6 @@ import kotlinx.coroutines.flow.flow
 
 /**
  * Production-ready foundation implementation of [AiService] for Mayra AI.
- * 
- * Provides:
- * 1. Rich multilingual understanding (Bengali, Hindi, Urdu, Arabic, English, Spanish, French, German, Chinese, Japanese, etc.)
- * 2. Automatic code generation with markdown block fencing
- * 3. Flow-based token streaming simulation
- * 4. Prepared integration point for Gemini / Cloud AI Provider in Step 2.
  */
 class DefaultMayraAiEngine : AiService {
 
@@ -27,19 +22,24 @@ class DefaultMayraAiEngine : AiService {
         conversationId: String,
         prompt: String,
         history: List<ChatMessage>,
-        config: AiModelConfig
+        config: AiModelConfig,
+        attachments: List<Attachment>
     ): Result<String> {
         val trimmed = prompt.trim()
-        if (trimmed.isEmpty()) {
+        val effectivePrompt = if (trimmed.isEmpty() && attachments.isNotEmpty()) {
+            "Analyze the attached ${attachments.first().type.name.lowercase()} file."
+        } else trimmed
+
+        if (effectivePrompt.isEmpty()) {
             return Result.failure(IllegalArgumentException("Message content cannot be empty."))
         }
 
         // Check for simulated error trigger commands (for testing robustness)
-        if (trimmed.equals("/error network", ignoreCase = true)) {
+        if (effectivePrompt.equals("/error network", ignoreCase = true)) {
             delay(800)
             return Result.failure(RuntimeException("Network connection timed out. Please check your internet connection and retry."))
         }
-        if (trimmed.equals("/error unavailable", ignoreCase = true)) {
+        if (effectivePrompt.equals("/error unavailable", ignoreCase = true)) {
             delay(800)
             return Result.failure(IllegalStateException("Mayra AI cloud engine is currently undergoing maintenance. Please try again shortly."))
         }
@@ -47,7 +47,7 @@ class DefaultMayraAiEngine : AiService {
         // Realistic thinking delay
         delay(900)
 
-        val response = synthesizeResponse(trimmed, history, config)
+        val response = synthesizeResponse(effectivePrompt, history, config)
         return Result.success(response)
     }
 
@@ -55,17 +55,22 @@ class DefaultMayraAiEngine : AiService {
         conversationId: String,
         prompt: String,
         history: List<ChatMessage>,
-        config: AiModelConfig
+        config: AiModelConfig,
+        attachments: List<Attachment>
     ): Flow<AiStreamChunk> = flow {
         val trimmed = prompt.trim()
-        if (trimmed.isEmpty()) {
+        val effectivePrompt = if (trimmed.isEmpty() && attachments.isNotEmpty()) {
+            "Analyze the attached ${attachments.first().type.name.lowercase()} file."
+        } else trimmed
+
+        if (effectivePrompt.isEmpty()) {
             throw IllegalArgumentException("Message content cannot be empty.")
         }
 
         // Realistic initial processing delay
         delay(400)
 
-        val fullText = synthesizeResponse(trimmed, history, config)
+        val fullText = synthesizeResponse(effectivePrompt, history, config)
         // Split into chunks to simulate smooth token streaming
         val words = fullText.split(" ")
         val buffer = StringBuilder()

@@ -95,10 +95,14 @@ class ChatRepositoryImpl(
         _isGenerating.value = false
     }
 
-    override suspend fun sendMessage(content: String, config: AiModelConfig): Result<ChatMessage> {
+    override suspend fun sendMessage(
+        content: String,
+        config: AiModelConfig,
+        attachments: List<com.example.domain.model.Attachment>
+    ): Result<ChatMessage> {
         val trimmed = content.trim()
-        if (trimmed.isEmpty()) {
-            return Result.failure(IllegalArgumentException("Message cannot be empty."))
+        if (trimmed.isEmpty() && attachments.isEmpty()) {
+            return Result.failure(IllegalArgumentException("Message or attachment cannot be empty."))
         }
 
         // Cancel any in-flight stream before starting new turn
@@ -111,7 +115,11 @@ class ChatRepositoryImpl(
 
         // Auto-title conversation on first message
         if (conv.title == "New Chat" && _messages.value.isEmpty()) {
-            val titleCandidate = if (trimmed.length > 32) trimmed.take(29) + "…" else trimmed
+            val titleCandidate = when {
+                trimmed.isNotEmpty() -> if (trimmed.length > 32) trimmed.take(29) + "…" else trimmed
+                attachments.isNotEmpty() -> attachments.first().name
+                else -> "New Chat"
+            }
             val updatedConv = conv.copy(title = titleCandidate, updatedAt = System.currentTimeMillis())
             conv = updatedConv
             _activeConversation.value = updatedConv
@@ -125,14 +133,15 @@ class ChatRepositoryImpl(
             role = MessageRole.USER,
             content = trimmed,
             timestamp = System.currentTimeMillis(),
-            status = MessageStatus.SENT
+            status = MessageStatus.SENT,
+            attachments = attachments.map { it.metadata }
         )
 
         // Append user message immediately
         _messages.value = _messages.value + userMessage
         persistMessage(userMessage, conv)
 
-        return executeAiStreaming(conv, trimmed, config)
+        return executeAiStreaming(conv, trimmed, config, attachments)
     }
 
     override suspend fun retryLastFailed(config: AiModelConfig): Result<ChatMessage> {
@@ -154,13 +163,14 @@ class ChatRepositoryImpl(
         _messages.value = updated
 
         val conv = _activeConversation.value ?: startNewConversation()
-        return executeAiStreaming(conv, userMsg.content, config)
+        return executeAiStreaming(conv, userMsg.content, config, emptyList())
     }
 
     private suspend fun executeAiStreaming(
         conv: Conversation,
         prompt: String,
-        config: AiModelConfig
+        config: AiModelConfig,
+        attachments: List<com.example.domain.model.Attachment> = emptyList()
     ): Result<ChatMessage> {
         _isGenerating.value = true
         val assistantMsgId = UUID.randomUUID().toString()
@@ -172,7 +182,7 @@ class ChatRepositoryImpl(
         val job = scope.launch {
             try {
                 val historySnapshot = _messages.value
-                aiService.generateStream(conv.id, prompt, historySnapshot, config)
+                aiService.generateStream(conv.id, prompt, historySnapshot, config, attachments)
                     .collect { chunk ->
                         if (!chunk.isComplete) {
                             textAccumulator.append(chunk.textDelta)

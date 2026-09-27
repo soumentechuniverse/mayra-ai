@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import com.example.ui.components.AttachmentBottomSheet
 import com.example.ui.components.ChatMessageItem
 import com.example.ui.components.EmptyChatView
 import com.example.ui.components.ErrorBanner
@@ -77,9 +78,11 @@ fun ChatScreen(
                 isGenerating = state.isGenerating,
                 onTextChanged = { onEvent(ChatUiEvent.InputTextChanged(it)) },
                 onSend = { onEvent(ChatUiEvent.SendClicked) },
-                onAttachmentClicked = { onEvent(ChatUiEvent.AttachmentPlaceholderClicked) },
+                onAttachmentClicked = { onEvent(ChatUiEvent.OpenAttachmentPicker) },
                 onVoiceClicked = { onEvent(ChatUiEvent.VoicePlaceholderClicked) },
                 onStopGenerating = { onEvent(ChatUiEvent.StopGeneration) },
+                pendingAttachments = state.pendingAttachments,
+                onRemoveAttachment = { onEvent(ChatUiEvent.RemovePendingAttachment(it)) },
                 modifier = Modifier.imePadding()
             )
         },
@@ -178,5 +181,13 @@ fun ChatScreen(
         onDeleteConversation = { onEvent(ChatUiEvent.DeleteConversation(it)) },
         onNewChat = { onEvent(ChatUiEvent.NewChatClicked) },
         onDismiss = { onEvent(ChatUiEvent.CloseHistory) }
+    )
+
+    // Modal Attachment Sheet Architecture
+    AttachmentBottomSheet(
+        isOpen = state.isAttachmentPickerOpen,
+        onDismiss = { onEvent(ChatUiEvent.CloseAttachmentPicker) },
+        onAttachmentsSelected = { onEvent(ChatUiEvent.AttachmentsSelected(it)) },
+        onAttachmentError = { onEvent(ChatUiEvent.AttachmentError(it)) }
     )
 }

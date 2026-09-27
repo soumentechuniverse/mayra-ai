@@ -1,6 +1,7 @@
 package com.example.ui.viewmodel
 
 import com.example.domain.model.AiModelConfig
+import com.example.domain.model.Attachment
 import com.example.domain.model.ChatMessage
 import com.example.domain.model.Conversation
 
@@ -15,6 +16,8 @@ data class ChatUiState(
     val isDarkTheme: Boolean = true,
     val isSettingsOpen: Boolean = false,
     val isHistoryOpen: Boolean = false,
+    val isAttachmentPickerOpen: Boolean = false,
+    val pendingAttachments: List<Attachment> = emptyList(),
     val snackbarMessage: String? = null,
     val bannerError: String? = null
 )

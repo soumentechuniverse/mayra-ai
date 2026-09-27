@@ -1,6 +1,7 @@
 package com.example.data.repository
 
 import com.example.domain.model.AiModelConfig
+import com.example.domain.model.Attachment
 import com.example.domain.model.ChatMessage
 import com.example.domain.model.Conversation
 import kotlinx.coroutines.flow.StateFlow
@@ -13,7 +14,11 @@ interface ChatRepository {
 
     suspend fun startNewConversation(title: String = "New Chat"): Conversation
     suspend fun selectConversation(conversationId: String)
-    suspend fun sendMessage(content: String, config: AiModelConfig): Result<ChatMessage>
+    suspend fun sendMessage(
+        content: String,
+        config: AiModelConfig,
+        attachments: List<Attachment> = emptyList()
+    ): Result<ChatMessage>
     suspend fun retryLastFailed(config: AiModelConfig): Result<ChatMessage>
     suspend fun clearMessages()
     suspend fun deleteConversation(conversationId: String)

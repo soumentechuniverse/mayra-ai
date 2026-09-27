@@ -7,14 +7,19 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -23,8 +28,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Mic
-import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -38,19 +45,26 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextDirection
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.example.R
+import com.example.domain.model.Attachment
+import com.example.domain.model.AttachmentType
 import com.example.ui.theme.MayraCyan
 import com.example.ui.theme.MayraCyanBright
+import com.example.ui.theme.MayraDarkSurfaceBorder
 import com.example.ui.theme.MayraDarkSurfaceElevated
 import com.example.ui.theme.MayraDarkSurfaceHover
 import com.example.ui.theme.MayraIndigo
+import com.example.ui.theme.MayraRose
 import com.example.ui.theme.MayraViolet
 
 @Composable
@@ -62,17 +76,38 @@ fun MessageComposer(
     onAttachmentClicked: () -> Unit,
     onVoiceClicked: () -> Unit,
     onStopGenerating: () -> Unit = {},
+    pendingAttachments: List<Attachment> = emptyList(),
+    onRemoveAttachment: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val hasText = text.isNotBlank()
+    val canSend = (hasText || pendingAttachments.isNotEmpty()) && !isGenerating
 
-    Box(
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .padding(horizontal = 12.dp, vertical = 6.dp)
             .navigationBarsPadding()
     ) {
+        // Pending Attachments Preview Tray
+        if (pendingAttachments.isNotEmpty()) {
+            LazyRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp)
+                    .testTag("pending_attachments_tray"),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(pendingAttachments, key = { it.id }) { att ->
+                    PendingAttachmentChip(
+                        attachment = att,
+                        onRemove = { onRemoveAttachment(att.id) }
+                    )
+                }
+            }
+        }
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -80,7 +115,7 @@ fun MessageComposer(
                 .background(MayraDarkSurfaceElevated)
                 .border(
                     width = 1.dp,
-                    brush = if (hasText) {
+                    brush = if (canSend) {
                         Brush.horizontalGradient(listOf(MayraCyan, MayraIndigo))
                     } else {
                         SolidColor(MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
@@ -91,7 +126,7 @@ fun MessageComposer(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            // Future File Attachment Placeholder Button
+            // Attachment Button
             IconButton(
                 onClick = onAttachmentClicked,
                 modifier = Modifier
@@ -102,7 +137,7 @@ fun MessageComposer(
                 Icon(
                     imageVector = Icons.Outlined.AttachFile,
                     contentDescription = stringResource(R.string.attach_file),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = if (pendingAttachments.isNotEmpty()) MayraCyan else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -116,7 +151,7 @@ fun MessageComposer(
             ) {
                 if (text.isEmpty()) {
                     Text(
-                        text = stringResource(R.string.message_hint),
+                        text = if (pendingAttachments.isNotEmpty()) "Add instructions or tap send…" else stringResource(R.string.message_hint),
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                     )
@@ -136,11 +171,11 @@ fun MessageComposer(
                     cursorBrush = SolidColor(MayraCyan),
                     keyboardOptions = KeyboardOptions(
                         capitalization = KeyboardCapitalization.Sentences,
-                        imeAction = if (hasText) ImeAction.Send else ImeAction.Default
+                        imeAction = if (canSend) ImeAction.Send else ImeAction.Default
                     ),
                     keyboardActions = KeyboardActions(
                         onSend = {
-                            if (hasText && !isGenerating) {
+                            if (canSend) {
                                 onSend()
                             }
                         }
@@ -170,7 +205,7 @@ fun MessageComposer(
                     .size(42.dp)
                     .clip(CircleShape)
                     .background(
-                        if (hasText && !isGenerating) {
+                        if (canSend) {
                             Brush.linearGradient(listOf(MayraCyanBright, MayraIndigo))
                         } else if (isGenerating) {
                             SolidColor(MayraDarkSurfaceHover)
@@ -205,7 +240,7 @@ fun MessageComposer(
                 } else {
                     IconButton(
                         onClick = onSend,
-                        enabled = hasText,
+                        enabled = canSend,
                         modifier = Modifier
                             .size(42.dp)
                             .minimumInteractiveComponentSize()
@@ -214,11 +249,120 @@ fun MessageComposer(
                         Icon(
                             imageVector = Icons.AutoMirrored.Outlined.Send,
                             contentDescription = stringResource(R.string.send_message),
-                            tint = if (hasText) Color.White else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                            tint = if (canSend) Color.White else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
                             modifier = Modifier.size(19.dp)
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PendingAttachmentChip(
+    attachment: Attachment,
+    onRemove: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF141A29))
+            .border(1.dp, MayraDarkSurfaceBorder, RoundedCornerShape(12.dp))
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            when (attachment.type) {
+                AttachmentType.IMAGE -> {
+                    if (!attachment.localUri.isNullOrBlank()) {
+                        AsyncImage(
+                            model = attachment.localUri,
+                            contentDescription = attachment.name,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MayraCyan.copy(alpha = 0.2f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("IMG", style = MaterialTheme.typography.labelSmall, color = MayraCyan)
+                        }
+                    }
+                }
+                AttachmentType.PDF -> {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MayraRose.copy(alpha = 0.2f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.PictureAsPdf,
+                            contentDescription = null,
+                            tint = MayraRose,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                AttachmentType.DOCUMENT -> {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MayraIndigo.copy(alpha = 0.2f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Description,
+                            contentDescription = null,
+                            tint = MayraCyanBright,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+
+            Column(modifier = Modifier.widthIn(max = 140.dp)) {
+                Text(
+                    text = attachment.name,
+                    style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                if (attachment.formattedSize.isNotEmpty()) {
+                    Text(
+                        text = attachment.formattedSize,
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            IconButton(
+                onClick = onRemove,
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF232D42))
+                    .testTag("remove_attachment_${attachment.id}")
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Close,
+                    contentDescription = "Remove attachment",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(14.dp)
+                )
             }
         }
     }
