@@ -67,6 +67,16 @@ android {
 
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
 // to match the convention used in Web projects.
+val envFile = rootProject.file(".env")
+val envApiKey = System.getenv("GEMINI_API_KEY")
+  ?: System.getenv("GOOGLE_API_KEY")
+  ?: (project.findProperty("GEMINI_API_KEY") as? String)
+
+if (!envApiKey.isNullOrBlank()) {
+  val existingLines = if (envFile.exists()) envFile.readLines().filter { !it.startsWith("GEMINI_API_KEY=") } else emptyList()
+  envFile.writeText((existingLines + "GEMINI_API_KEY=$envApiKey").joinToString("\n") + "\n")
+}
+
 secrets {
   propertiesFileName = ".env"
   defaultPropertiesFileName = ".env.example"

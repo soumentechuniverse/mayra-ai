@@ -13,6 +13,7 @@ import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -23,6 +24,18 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class GeminiServiceTest {
+
+    @Test
+    fun `default GeminiService constructor initializes correctly`() {
+        val service = GeminiService()
+        assertNotNull(service)
+    }
+
+    @Test
+    fun `isAvailable handles quoted key strings from secrets or environment`() = runBlocking {
+        val service = GeminiService(apiKeyProvider = { "\"AIzaSyQuotedKey123\"" })
+        assertTrue(service.isAvailable())
+    }
 
     @Test
     fun `isAvailable returns false for placeholder key`() = runBlocking {

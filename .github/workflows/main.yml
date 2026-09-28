@@ -22,7 +22,17 @@ jobs:
       - name: Make Gradle executable
         run: chmod +x gradlew
 
+      - name: Configure Secrets
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || secrets.GOOGLE_API_KEY || vars.GEMINI_API_KEY }}
+        run: |
+          if [ -n "$GEMINI_API_KEY" ]; then
+            echo "GEMINI_API_KEY=$GEMINI_API_KEY" >> .env
+          fi
+
       - name: Build Debug APK
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || secrets.GOOGLE_API_KEY || vars.GEMINI_API_KEY }}
         run: ./gradlew assembleDebug
 
       - name: Upload APK

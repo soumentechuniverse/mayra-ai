@@ -47,7 +47,7 @@ class StartupWelcomeScreenTest {
     }
 
     @Test
-    fun `welcome chat screen shows How can Mayra help you today and all 5 starter options`() {
+    fun `welcome chat screen shows How can Mayra help you today and 3 simple language options`() {
         var clickedPrompt: String? = null
 
         composeTestRule.setContent {
@@ -61,31 +61,21 @@ class StartupWelcomeScreenTest {
         // Verify headline
         composeTestRule.onNodeWithText("How can Mayra help you today?").assertIsDisplayed()
 
-        // Verify the 5 requested starter options are displayed
-        composeTestRule.onNodeWithText("বাংলায় শুরু করুন").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Start in English").assertIsDisplayed()
-        composeTestRule.onNodeWithText("हिंदी में शुरू करें").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Start a conversation").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Ask anything").assertIsDisplayed()
+        // Verify the 3 requested language options are displayed
+        composeTestRule.onNodeWithText("বাংলা").assertIsDisplayed()
+        composeTestRule.onNodeWithText("English").assertIsDisplayed()
+        composeTestRule.onNodeWithText("हिंदी").assertIsDisplayed()
 
         // Test clicking Bengali starter
-        composeTestRule.onNodeWithText("বাংলায় শুরু করুন").performClick()
+        composeTestRule.onNodeWithText("বাংলা").performClick()
         assertEquals("নমস্কার Mayra! আমি বাংলায় কথা বলতে চাই।", clickedPrompt)
 
         // Test clicking English starter
-        composeTestRule.onNodeWithText("Start in English").performClick()
+        composeTestRule.onNodeWithText("English").performClick()
         assertEquals("Hello Mayra! Let's get started in English.", clickedPrompt)
 
         // Test clicking Hindi starter
-        composeTestRule.onNodeWithText("हिंदी में शुरू करें").performClick()
+        composeTestRule.onNodeWithText("हिंदी").performClick()
         assertEquals("नमस्ते Mayra! चलिए हिंदी में बातचीत शुरू करते हैं।", clickedPrompt)
-
-        // Test clicking Start a conversation
-        composeTestRule.onNodeWithText("Start a conversation").performClick()
-        assertEquals("Hello Mayra, let's start a conversation.", clickedPrompt)
-
-        // Test clicking Ask anything
-        composeTestRule.onNodeWithText("Ask anything").performClick()
-        assertEquals("What are some intriguing topics or questions we can explore today?", clickedPrompt)
     }
 }

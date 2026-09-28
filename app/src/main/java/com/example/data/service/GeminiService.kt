@@ -62,7 +62,7 @@ class GeminiService(
     }
 
     override suspend fun isAvailable(): Boolean {
-        val key = apiKeyProvider().trim()
+        val key = apiKeyProvider().trim().removeSurrounding("\"")
         return key.isNotEmpty() && key != PLACEHOLDER_KEY
     }
 
@@ -102,7 +102,7 @@ class GeminiService(
         attachments: List<com.example.domain.model.Attachment>,
         enableSearch: Boolean
     ): Flow<AiStreamChunk> = flow {
-        val apiKey = apiKeyProvider().trim()
+        val apiKey = apiKeyProvider().trim().removeSurrounding("\"")
         if (apiKey.isEmpty() || apiKey == PLACEHOLDER_KEY) {
             throw IllegalStateException(
                 "Gemini API key is not configured. Please add your GEMINI_API_KEY in the AI Studio Secrets panel."
