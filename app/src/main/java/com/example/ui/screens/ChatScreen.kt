@@ -5,8 +5,10 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,6 +23,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -28,7 +31,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.domain.model.VoiceState
 import com.example.ui.components.AttachmentBottomSheet
@@ -123,75 +128,119 @@ fun ChatScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = MaterialTheme.colorScheme.background
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // Dismissible error banner for network/service faults
-            state.bannerError?.let { err ->
-                ErrorBanner(
-                    errorMessage = err,
-                    onRetry = { onEvent(ChatUiEvent.RetryLastFailed) },
-                    onDismiss = { onEvent(ChatUiEvent.DismissBannerError) }
+            // Subtle, elegant "Soumen Mondal" watermark in background
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag("chat_watermark_layer"),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Soumen Mondal",
+                    style = MaterialTheme.typography.headlineLarge.copy(
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 4.sp,
+                        fontSize = 28.sp
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
+                    modifier = Modifier.testTag("soumen_mondal_watermark")
                 )
             }
 
-            if (state.messages.isEmpty()) {
-                // Empty state greeting with quick-start suggestion chips
-                EmptyChatView(
-                    onSuggestionClicked = { onEvent(ChatUiEvent.SuggestionClicked(it)) },
-                    modifier = Modifier.weight(1f)
-                )
-            } else {
-                // Scrollable conversation area
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .testTag("chat_messages_list")
-                ) {
-                    item {
-                        Spacer(modifier = Modifier.height(10.dp))
-                    }
-
-                    items(state.messages, key = { it.id }) { msg ->
-                        ChatMessageItem(
-                            message = msg,
-                            onRetry = { onEvent(ChatUiEvent.RetryLastFailed) },
-                            onCopiedFeedback = {
-                                onEvent(ChatUiEvent.DismissSnackbar("Copied to clipboard"))
-                            },
-                            voiceState = state.voiceState,
-                            onSpeak = { onEvent(ChatUiEvent.SpeakMessage(msg.id, msg.content)) },
-                            onPauseSpeech = { onEvent(ChatUiEvent.PauseSpeech) },
-                            onResumeSpeech = { onEvent(ChatUiEvent.ResumeSpeech) },
-                            onStopSpeech = { onEvent(ChatUiEvent.StopSpeech) }
-                        )
-                    }
-
-                    // Show thinking indicator ONLY before the first response chunk arrives
-                    val isWaitingForFirstChunk = state.isGenerating && (
-                        state.messages.isEmpty() ||
-                        state.messages.last().role != com.example.domain.model.MessageRole.ASSISTANT ||
-                        state.messages.last().content.isEmpty()
+            Column(
+                modifier = Modifier.fillMaxSize()
+            ) {
+                // Dismissible error banner for network/service faults
+                state.bannerError?.let { err ->
+                    ErrorBanner(
+                        errorMessage = err,
+                        onRetry = { onEvent(ChatUiEvent.RetryLastFailed) },
+                        onDismiss = { onEvent(ChatUiEvent.DismissBannerError) }
                     )
-                    if (isWaitingForFirstChunk) {
+                }
+
+                if (state.messages.isEmpty()) {
+                    // Empty state greeting with clean welcome
+                    EmptyChatView(
+                        onSuggestionClicked = { onEvent(ChatUiEvent.SuggestionClicked(it)) },
+                        modifier = Modifier.weight(1f)
+                    )
+                } else {
+                    // Scrollable conversation area
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .testTag("chat_messages_list")
+                    ) {
                         item {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 6.dp),
-                                contentAlignment = Alignment.CenterStart
-                            ) {
-                                ThinkingIndicator(searchPhase = state.searchPhase)
+                            Spacer(modifier = Modifier.height(10.dp))
+                        }
+
+                        items(state.messages, key = { it.id }) { msg ->
+                            ChatMessageItem(
+                                message = msg,
+                                onRetry = { onEvent(ChatUiEvent.RetryLastFailed) },
+                                onCopiedFeedback = {
+                                    onEvent(ChatUiEvent.DismissSnackbar("Copied to clipboard"))
+                                },
+                                voiceState = state.voiceState,
+                                onSpeak = { onEvent(ChatUiEvent.SpeakMessage(msg.id, msg.content)) },
+                                onPauseSpeech = { onEvent(ChatUiEvent.PauseSpeech) },
+                                onResumeSpeech = { onEvent(ChatUiEvent.ResumeSpeech) },
+                                onStopSpeech = { onEvent(ChatUiEvent.StopSpeech) }
+                            )
+                        }
+
+                        // Show thinking indicator ONLY before the first response chunk arrives
+                        val isWaitingForFirstChunk = state.isGenerating && (
+                            state.messages.isEmpty() ||
+                            state.messages.last().role != com.example.domain.model.MessageRole.ASSISTANT ||
+                            state.messages.last().content.isEmpty()
+                        )
+                        if (isWaitingForFirstChunk) {
+                            item {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                                    contentAlignment = Alignment.CenterStart
+                                ) {
+                                    ThinkingIndicator(searchPhase = state.searchPhase)
+                                }
                             }
                         }
-                    }
 
-                    item {
-                        Spacer(modifier = Modifier.height(16.dp))
+                        item {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 12.dp)
+                                    .testTag("conversation_footer_watermark"),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Mayra AI • Soumen Mondal",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        letterSpacing = 1.2.sp
+                                    ),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+                                )
+                            }
+                        }
+
+                        item {
+                            Spacer(modifier = Modifier.height(12.dp))
+                        }
                     }
                 }
             }
@@ -224,7 +273,18 @@ fun ChatScreen(
         onAddMemory = { content, cat -> onEvent(ChatUiEvent.AddMemory(content, cat)) },
         onToggleMemoryItem = { id, enabled -> onEvent(ChatUiEvent.ToggleMemoryItem(id, enabled)) },
         onDeleteMemory = { onEvent(ChatUiEvent.DeleteMemoryItem(it)) },
-        onClearAllMemories = { onEvent(ChatUiEvent.ConfirmClearMemories) }
+        onClearAllMemories = { onEvent(ChatUiEvent.ConfirmClearMemories) },
+        isCheckingUpdate = state.isCheckingUpdate,
+        updateInfo = state.updateInfo,
+        updateStatusMessage = state.updateStatusMessage,
+        updateSourceUrl = state.updateSourceUrl,
+        isUpdateSourceConfigOpen = state.isUpdateSourceConfigOpen,
+        onCheckForUpdate = { onEvent(ChatUiEvent.CheckForAppUpdate) },
+        onUpdateSourceUrlChanged = { onEvent(ChatUiEvent.UpdateSourceUrlChanged(it)) },
+        onResetUpdateSourceUrl = { onEvent(ChatUiEvent.ResetUpdateSourceUrl) },
+        onToggleUpdateSourceConfig = { onEvent(ChatUiEvent.ToggleUpdateSourceConfig) },
+        onDownloadAppUpdate = { ctx, url -> onEvent(ChatUiEvent.DownloadAppUpdate(ctx, url)) },
+        onDismissUpdateDialog = { onEvent(ChatUiEvent.DismissUpdateDialog) }
     )
 
     // Modal History Sheet Architecture

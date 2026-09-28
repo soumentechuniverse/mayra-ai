@@ -1,6 +1,10 @@
 package com.example.ui.components
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,10 +12,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.OpenInNew
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -19,6 +27,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -28,7 +38,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.example.ui.theme.MayraCyan
+import com.example.ui.theme.MayraDarkSurface
+import com.example.ui.theme.MayraDarkSurfaceBorder
+import com.example.ui.theme.MayraDarkSurfaceElevated
 
 private sealed interface ContentBlock {
     data class Paragraph(val text: String) : ContentBlock
@@ -36,6 +50,7 @@ private sealed interface ContentBlock {
     data class BulletItem(val text: String, val level: Int = 0) : ContentBlock
     data class NumberedItem(val number: String, val text: String) : ContentBlock
     data class CodeBlock(val language: String, val code: String) : ContentBlock
+    data class Image(val alt: String, val url: String) : ContentBlock
 }
 
 @Composable
@@ -139,6 +154,64 @@ fun MarkdownContent(
                         color = textColor
                     )
                 }
+
+                is ContentBlock.Image -> {
+                    val context = LocalContext.current
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MayraDarkSurface)
+                            .border(1.dp, MayraDarkSurfaceBorder, RoundedCornerShape(14.dp))
+                            .clickable {
+                                try {
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_VIEW, Uri.parse(block.url)).apply {
+                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                        }
+                                    )
+                                } catch (_: Exception) {}
+                            }
+                    ) {
+                        AsyncImage(
+                            model = block.url,
+                            contentDescription = block.alt,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 160.dp, max = 280.dp)
+                                .clip(RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp)),
+                            contentScale = ContentScale.Crop
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = block.alt.ifBlank { "Retrieved image" },
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    text = "Retrieved via Wikimedia Commons / Open Web",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.Outlined.OpenInNew,
+                                contentDescription = "Open full image",
+                                tint = MayraCyan,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -155,6 +228,16 @@ private fun parseContentToBlocks(text: String): List<ContentBlock> {
     while (index < lines.size) {
         val line = lines[index]
         val trimmed = line.trim()
+
+        // Markdown image: ![alt](url)
+        val imageMatch = Regex("""^!\[(.*?)\]\((.*?)\)$""").find(trimmed)
+        if (imageMatch != null) {
+            val alt = imageMatch.groupValues[1]
+            val url = imageMatch.groupValues[2]
+            blocks.add(ContentBlock.Image(alt, url))
+            index++
+            continue
+        }
 
         if (trimmed.startsWith("```")) {
             // Code block start
@@ -216,6 +299,7 @@ private fun parseContentToBlocks(text: String): List<ContentBlock> {
                     nextTrimmed.startsWith("* ") ||
                     nextTrimmed.startsWith("- ") ||
                     nextTrimmed.startsWith("• ") ||
+                    nextTrimmed.startsWith("![") ||
                     Regex("^(\\d+)\\.\\s+.*").matches(nextTrimmed)
                 ) {
                     break

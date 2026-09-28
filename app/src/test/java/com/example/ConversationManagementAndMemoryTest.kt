@@ -14,8 +14,11 @@ import com.example.domain.model.MemoryCategory
 import com.example.domain.model.MessageRole
 import com.example.domain.service.AiService
 import com.example.domain.service.MemoryDetector
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -42,6 +45,7 @@ import org.robolectric.annotation.Config
 class ConversationManagementAndMemoryTest {
 
     private val testDispatcher = StandardTestDispatcher()
+    private lateinit var testScope: CoroutineScope
     private lateinit var context: Context
     private lateinit var database: MayraDatabase
     private lateinit var fakeAiService: FakeAiService
@@ -57,16 +61,19 @@ class ConversationManagementAndMemoryTest {
             .build()
         fakeAiService = FakeAiService()
         memoryPreferences = MemoryPreferences(context)
+        testScope = CoroutineScope(SupervisorJob() + testDispatcher)
         repository = ChatRepositoryImpl(
             aiService = fakeAiService,
             conversationDao = database.conversationDao(),
             memoryDao = database.memoryDao(),
-            memoryPreferences = memoryPreferences
+            memoryPreferences = memoryPreferences,
+            scope = testScope
         )
     }
 
     @After
     fun tearDown() {
+        testScope.cancel()
         database.close()
         Dispatchers.resetMain()
     }

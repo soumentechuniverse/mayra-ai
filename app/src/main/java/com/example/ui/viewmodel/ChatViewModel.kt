@@ -28,7 +28,9 @@ class ChatViewModel(
     private val repository: ChatRepository,
     private val speechRecognizerService: SpeechRecognizerService? = null,
     private val textToSpeechService: TextToSpeechService? = null,
-    private val voicePreferences: VoicePreferences? = null
+    private val voicePreferences: VoicePreferences? = null,
+    private val appUpdatePreferences: com.example.data.local.AppUpdatePreferences? = null,
+    private val appUpdateService: com.example.data.service.AppUpdateService = com.example.data.service.AppUpdateService()
 ) : ViewModel() {
 
     private val _inputText = MutableStateFlow("")
@@ -53,9 +55,26 @@ class ChatViewModel(
     private val _isManageMemoryOpen = MutableStateFlow(false)
     private val _clearMemoriesConfirmationOpen = MutableStateFlow(false)
 
+    // App Update States
+    private val _isCheckingUpdate = MutableStateFlow(false)
+    private val _updateInfo = MutableStateFlow<com.example.data.service.AppUpdateInfo?>(null)
+    private val _updateStatusMessage = MutableStateFlow<String?>(null)
+    private val _updateSourceUrl = MutableStateFlow(
+        appUpdatePreferences?.getUpdateUrl() ?: com.example.data.local.AppUpdatePreferences.DEFAULT_UPDATE_URL
+    )
+    private val _isUpdateSourceConfigOpen = MutableStateFlow(false)
+
     private var lastAutoSpokenMessageId: String? = null
 
     init {
+        // Collect update preferences if present
+        if (appUpdatePreferences != null) {
+            viewModelScope.launch {
+                appUpdatePreferences.updateSourceUrl.collect { url ->
+                    _updateSourceUrl.value = url
+                }
+            }
+        }
         // Collect voice preferences
         if (voicePreferences != null) {
             viewModelScope.launch {
@@ -134,13 +153,26 @@ class ChatViewModel(
             CombinedGenState(isGen, sPhase, input, model, sMode)
         },
         combine(
-            _voiceState,
-            _voiceSettings,
-            _isDarkTheme,
-            _isSettingsOpen,
-            _isHistoryOpen
-        ) { vState, vSettings, dark, settingsOpen, histOpen ->
-            CombinedUiControlState(vState, vSettings, dark, settingsOpen, histOpen)
+            combine(
+                _voiceState,
+                _voiceSettings,
+                _isDarkTheme,
+                _isSettingsOpen,
+                _isHistoryOpen
+            ) { vState, vSettings, dark, settingsOpen, histOpen ->
+                CombinedUiControlState(vState, vSettings, dark, settingsOpen, histOpen)
+            },
+            combine(
+                _isCheckingUpdate,
+                _updateInfo,
+                _updateStatusMessage,
+                _updateSourceUrl,
+                _isUpdateSourceConfigOpen
+            ) { isChecking, info, status, url, configOpen ->
+                CombinedUpdateState(isChecking, info, status, url, configOpen)
+            }
+        ) { uiCtrl, updateState ->
+            Pair(uiCtrl, updateState)
         },
         combine(
             _isAttachmentPickerOpen,
@@ -160,7 +192,10 @@ class ChatViewModel(
         ) { showArchived, renameConv, deleteConv, manageMem, clearMem ->
             CombinedMemoryUiState(showArchived, renameConv, deleteConv, manageMem, clearMem)
         }
-    ) { repo, gen, uiCtrl, dialog, memUi ->
+    ) { repo, gen, uiAndUpd, dialog, memUi ->
+        val uiCtrl = uiAndUpd.first
+        val updateState = uiAndUpd.second
+
         // Compute filtered conversations for HistoryDrawer based on search query and archived tab
         val query = dialog.historySearchQuery.trim()
         val allConvs = repo.conversations
@@ -203,7 +238,12 @@ class ChatViewModel(
             isAttachmentPickerOpen = dialog.isAttachmentPickerOpen,
             pendingAttachments = dialog.pendingAttachments,
             snackbarMessage = dialog.snackbarMessage,
-            bannerError = dialog.bannerError
+            bannerError = dialog.bannerError,
+            isCheckingUpdate = updateState.isChecking,
+            updateInfo = updateState.info,
+            updateStatusMessage = updateState.status,
+            updateSourceUrl = updateState.url,
+            isUpdateSourceConfigOpen = updateState.configOpen
         )
     }.stateIn(
         scope = viewModelScope,
@@ -521,6 +561,55 @@ class ChatViewModel(
                     repository.cancelGeneration()
                 }
             }
+
+            // App Update Events
+            ChatUiEvent.CheckForAppUpdate -> {
+                viewModelScope.launch {
+                    _isCheckingUpdate.value = true
+                    _updateStatusMessage.value = "Checking for Mayra AI updates..."
+                    val url = appUpdatePreferences?.getUpdateUrl() ?: com.example.data.local.AppUpdatePreferences.DEFAULT_UPDATE_URL
+                    val result = appUpdateService.checkForUpdate(url)
+                    _isCheckingUpdate.value = false
+                    if (result.isSuccess) {
+                        val info = result.getOrNull()
+                        _updateInfo.value = info
+                        if (info?.isUpdateAvailable == true) {
+                            _updateStatusMessage.value = "New version ${info.latestVersion} available!"
+                        } else {
+                            _updateStatusMessage.value = "Mayra AI is up to date (v${info?.currentVersion ?: "1.0"})."
+                        }
+                    } else {
+                        _updateStatusMessage.value = result.exceptionOrNull()?.localizedMessage ?: "Failed to check for updates."
+                    }
+                }
+            }
+
+            is ChatUiEvent.UpdateSourceUrlChanged -> {
+                appUpdatePreferences?.setUpdateUrl(event.url)
+                _updateSourceUrl.value = event.url
+                _snackbarMessage.value = "Update source URL updated."
+            }
+
+            ChatUiEvent.ResetUpdateSourceUrl -> {
+                appUpdatePreferences?.resetToDefault()
+                _updateSourceUrl.value = com.example.data.local.AppUpdatePreferences.DEFAULT_UPDATE_URL
+                _snackbarMessage.value = "Update source reset to default."
+            }
+
+            ChatUiEvent.ToggleUpdateSourceConfig -> {
+                _isUpdateSourceConfigOpen.value = !_isUpdateSourceConfigOpen.value
+            }
+
+            is ChatUiEvent.DownloadAppUpdate -> {
+                if (event.url.isNotBlank()) {
+                    appUpdateService.openDownloadUrl(event.context, event.url)
+                }
+            }
+
+            ChatUiEvent.DismissUpdateDialog -> {
+                _updateInfo.value = null
+                _updateStatusMessage.value = null
+            }
         }
     }
 
@@ -535,7 +624,8 @@ class ChatViewModel(
             repository: ChatRepository,
             speechRecognizerService: SpeechRecognizerService? = null,
             textToSpeechService: TextToSpeechService? = null,
-            voicePreferences: VoicePreferences? = null
+            voicePreferences: VoicePreferences? = null,
+            appUpdatePreferences: com.example.data.local.AppUpdatePreferences? = null
         ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
@@ -544,13 +634,22 @@ class ChatViewModel(
                         repository = repository,
                         speechRecognizerService = speechRecognizerService,
                         textToSpeechService = textToSpeechService,
-                        voicePreferences = voicePreferences
+                        voicePreferences = voicePreferences,
+                        appUpdatePreferences = appUpdatePreferences
                     ) as T
                 }
             }
     }
 
     // Helper data classes for combine decomposition
+    private data class CombinedUpdateState(
+        val isChecking: Boolean,
+        val info: com.example.data.service.AppUpdateInfo?,
+        val status: String?,
+        val url: String,
+        val configOpen: Boolean
+    )
+
     private data class CombinedRepoState(
         val activeConversation: Conversation?,
         val messages: List<ChatMessage>,

@@ -18,16 +18,22 @@ class DefaultSearchIntentDetector : SearchIntentDetector {
     companion object {
         // Explicit search requests
         private val EXPLICIT_SEARCH_PATTERN = Pattern.compile(
-            """(?i)\b(search\s+(the\s+)?(web|internet|online)|look\s*up\s+online|find\s+online|google\s+(this|it)|browse\s+(the\s+)?web)\b"""
+            """(?i)\b(search\s+(the\s+)?(web|internet|online)|look\s*up\s+online|find\s+online|google\s+(this|it)|browse\s+(the\s+)?web|show\s+(me\s+)?(a\s+)?(photo|image|picture)|find\s+(a\s+)?(photo|image|picture)|pictures?\s+of|photos?\s+of|images?\s+of|website|webpage|document\s+online|online\s+content)\b"""
         )
 
         private val BENGALI_EXPLICIT_SEARCH = listOf(
             "ওয়েবে খোঁজ", "ওয়েবে খুঁজ", "ওয়েবে সার্চ", "অনলাইনে খোঁজ", "অনলাইনে খুঁজ", "অনলাইনে সার্চ",
-            "ইন্টারনেটে খোঁজ", "ইন্টারনেটে খুঁজ", "ইন্টারনেটে সার্চ", "নেট ঘেঁটে", "খুঁজে দেখো"
+            "ইন্টারনেটে খোঁজ", "ইন্টারনেটে খুঁজ", "ইন্টারনেটে সার্চ", "নেট ঘেঁটে", "খুঁজে দেখো",
+            "ছবি দেখাও", "ছবি খোঁজো", "ছবি দাও", "ছবি দেখতে চাই"
         )
 
         private val HINDI_EXPLICIT_SEARCH = listOf(
-            "वेब पर खोजें", "इंटरनेट पर खोजें", "ऑनलाइन खोजें"
+            "वेब पर खोजें", "इंटरनेट पर खोजें", "ऑनलाइन खोजें",
+            "तस्वीर दिखाओ", "फोटो दिखाओ", "चित्र दिखाओ", "तस्वीरें दिखाएं"
+        )
+
+        val IMAGE_REQUEST_PATTERN = Pattern.compile(
+            """(?i)\b(show\s+(me\s+)?(a\s+)?(photo|image|picture)s?|find\s+(a\s+)?(photo|image|picture)s?|pictures?\s+of|photos?\s+of|images?\s+of|picture\s+of|photo\s+of)\b"""
         )
 
         // Dynamic / Temporal indicators that mandate fresh web grounding
@@ -195,5 +201,25 @@ class DefaultSearchIntentDetector : SearchIntentDetector {
         }
 
         return false
+    }
+
+    fun isImageSearch(raw: String): Boolean {
+        val lower = raw.lowercase(Locale.ROOT)
+        if (IMAGE_REQUEST_PATTERN.matcher(lower).find()) return true
+        if (raw.contains("ছবি দেখাও") || raw.contains("ছবি খোঁজো") || raw.contains("ছবি দেখতে চাই") || raw.contains("ছবি")) {
+            if (!raw.contains("ছবি আঁকো")) return true
+        }
+        if (raw.contains("तस्वीर दिखाओ") || raw.contains("फोटो दिखाओ") || raw.contains("चित्र दिखाओ")) return true
+        return false
+    }
+
+    fun extractImageSubject(raw: String): String {
+        var clean = raw
+        clean = clean.replace(Regex("""(?i)\b(show\s+(me\s+)?(a\s+)?(photo|image|picture)s?(\s+of)?|find\s+(a\s+)?(photo|image|picture)s?(\s+of)?|pictures?\s+of|photos?\s+of|images?\s+of|picture\s+of|photo\s+of|give\s+me\s+(a\s+)?(photo|image))\b"""), " ")
+        clean = clean.replace(Regex("""(?:এর\s+)?(?:ছবি|তসবির)(?:\s*(?:দেখাও|খোঁজো|দেখতে চাই|দাও|দিন))?|ছবি"""), " ")
+        clean = clean.replace(Regex("""\s+এর(?:\s+|$)"""), " ")
+        clean = clean.replace(Regex("""(?:की\s+)?(?:तस्वीर|फोटो|चित्र)(?:\s*(?:दिखाओ|दिखाइए|खोजो|दीजिए))?"""), " ")
+        clean = clean.replace(Regex("""[?.!,;]"""), " ")
+        return clean.trim().ifBlank { raw.trim() }
     }
 }

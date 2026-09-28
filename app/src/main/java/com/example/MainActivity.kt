@@ -44,6 +44,7 @@ class MainActivity : ComponentActivity() {
             textToSpeechService = it
         }
         val voicePrefs = VoicePreferences(applicationContext)
+        val updatePrefs = com.example.data.local.AppUpdatePreferences(applicationContext)
 
         setContent {
             val database = remember { MayraDatabase.getDatabase(applicationContext) }
@@ -63,7 +64,8 @@ class MainActivity : ComponentActivity() {
                     repository = repository,
                     speechRecognizerService = speechService,
                     textToSpeechService = ttsService,
-                    voicePreferences = voicePrefs
+                    voicePreferences = voicePrefs,
+                    appUpdatePreferences = updatePrefs
                 )
             )
 

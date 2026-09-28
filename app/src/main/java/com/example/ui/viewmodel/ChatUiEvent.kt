@@ -65,4 +65,12 @@ sealed interface ChatUiEvent {
     data class VoiceInputLanguageChanged(val language: com.example.domain.model.VoiceLanguage) : ChatUiEvent
     data class VoiceAutoSpeakToggled(val enabled: Boolean) : ChatUiEvent
     data class VoiceOutputLanguageChanged(val language: com.example.domain.model.VoiceLanguage) : ChatUiEvent
+
+    // App Update Events
+    data object CheckForAppUpdate : ChatUiEvent
+    data class UpdateSourceUrlChanged(val url: String) : ChatUiEvent
+    data object ResetUpdateSourceUrl : ChatUiEvent
+    data object ToggleUpdateSourceConfig : ChatUiEvent
+    data class DownloadAppUpdate(val context: android.content.Context, val url: String) : ChatUiEvent
+    data object DismissUpdateDialog : ChatUiEvent
 }

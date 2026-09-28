@@ -23,14 +23,18 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Psychology
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
@@ -57,10 +61,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.BuildConfig
+import com.example.data.local.AppUpdatePreferences
+import com.example.data.service.AppUpdateInfo
 import com.example.domain.model.AiModelConfig
 import com.example.domain.model.MemoryCategory
 import com.example.domain.model.MemoryItem
@@ -102,6 +110,18 @@ fun SettingsSheet(
     onToggleMemoryItem: (String, Boolean) -> Unit = { _, _ -> },
     onDeleteMemory: (String) -> Unit = {},
     onClearAllMemories: () -> Unit = {},
+    // App Update
+    isCheckingUpdate: Boolean = false,
+    updateInfo: AppUpdateInfo? = null,
+    updateStatusMessage: String? = null,
+    updateSourceUrl: String = AppUpdatePreferences.DEFAULT_UPDATE_URL,
+    isUpdateSourceConfigOpen: Boolean = false,
+    onCheckForUpdate: () -> Unit = {},
+    onUpdateSourceUrlChanged: (String) -> Unit = {},
+    onResetUpdateSourceUrl: () -> Unit = {},
+    onToggleUpdateSourceConfig: () -> Unit = {},
+    onDownloadAppUpdate: (android.content.Context, String) -> Unit = { _, _ -> },
+    onDismissUpdateDialog: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     if (!isOpen) return
@@ -546,6 +566,265 @@ fun SettingsSheet(
                             ),
                             color = if (isSelected) MayraCyan else MaterialTheme.colorScheme.onSurface
                         )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // App Update Section
+            Text(
+                text = "APP UPDATE",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    letterSpacing = 1.sp,
+                    fontWeight = FontWeight.Bold
+                ),
+                color = MayraCyan
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Check the official release channel for newer versions and changelogs.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MayraDarkSurfaceElevated)
+                    .border(1.dp, MayraDarkSurfaceBorder, RoundedCornerShape(12.dp))
+                    .padding(14.dp)
+                    .testTag("app_update_section")
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(MayraCyan.copy(alpha = 0.15f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.SystemUpdate,
+                                    contentDescription = null,
+                                    tint = MayraCyan,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            Column {
+                                Text(
+                                    text = "Mayra AI",
+                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "Current: v${BuildConfig.VERSION_NAME.ifBlank { "1.0" }}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.testTag("current_version_text")
+                                )
+                            }
+                        }
+
+                        FilledTonalButton(
+                            onClick = onCheckForUpdate,
+                            enabled = !isCheckingUpdate,
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = MayraCyan.copy(alpha = 0.2f),
+                                contentColor = MayraCyan
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.testTag("check_for_updates_button")
+                        ) {
+                            if (isCheckingUpdate) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MayraCyan
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Checking...", style = MaterialTheme.typography.labelSmall)
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Outlined.Refresh,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Check Now", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+
+                    // Status message if any
+                    updateStatusMessage?.let { status ->
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF0F172A))
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = status,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (updateInfo?.isUpdateAvailable == true) MayraCyan else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.testTag("update_status_message")
+                            )
+                        }
+                    }
+
+                    // Update details card if update available
+                    if (updateInfo != null && updateInfo.isUpdateAvailable) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFF0B192C))
+                                .border(1.dp, MayraCyan.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                                .padding(12.dp)
+                                .testTag("update_available_card")
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Update Available: v${updateInfo.latestVersion}",
+                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                        color = MayraCyan,
+                                        modifier = Modifier.testTag("latest_version_text")
+                                    )
+                                    updateInfo.releaseDate?.let { date ->
+                                        Text(
+                                            text = date.take(10),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "What's New:",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = updateInfo.releaseNotes,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.testTag("update_release_notes")
+                                )
+
+                                Spacer(modifier = Modifier.height(10.dp))
+                                val context = LocalContext.current
+                                Button(
+                                    onClick = { onDownloadAppUpdate(context, updateInfo.downloadUrl) },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MayraCyan,
+                                        contentColor = MayraDarkSurface
+                                    ),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("download_update_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.CloudDownload,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Download & Install Update",
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Configurable update source toggle
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onToggleUpdateSourceConfig() }
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Release Source Configuration",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = if (isUpdateSourceConfigOpen) "Hide ▲" else "Configure ▼",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                            color = MayraCyan,
+                            modifier = Modifier.testTag("configure_update_source_button")
+                        )
+                    }
+
+                    if (isUpdateSourceConfigOpen) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        var tempUrl by remember(updateSourceUrl) { mutableStateOf(updateSourceUrl) }
+
+                        OutlinedTextField(
+                            value = tempUrl,
+                            onValueChange = {
+                                tempUrl = it
+                                onUpdateSourceUrlChanged(it)
+                            },
+                            label = { Text("Update Source URL (GitHub or Custom JSON)") },
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MayraCyan,
+                                unfocusedBorderColor = MayraDarkSurfaceBorder,
+                                focusedLabelColor = MayraCyan
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("update_source_input")
+                        )
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    onResetUpdateSourceUrl()
+                                    tempUrl = AppUpdatePreferences.DEFAULT_UPDATE_URL
+                                },
+                                modifier = Modifier.testTag("reset_update_source_button")
+                            ) {
+                                Text("Reset to Official Release", color = MayraCyan, style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
                     }
                 }
             }

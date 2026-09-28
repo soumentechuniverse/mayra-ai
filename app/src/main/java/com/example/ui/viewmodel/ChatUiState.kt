@@ -37,5 +37,10 @@ data class ChatUiState(
     val voiceState: VoiceState = VoiceState.Idle,
     val voiceSettings: VoiceSettings = VoiceSettings(),
     val snackbarMessage: String? = null,
-    val bannerError: String? = null
+    val bannerError: String? = null,
+    val isCheckingUpdate: Boolean = false,
+    val updateInfo: com.example.data.service.AppUpdateInfo? = null,
+    val updateStatusMessage: String? = null,
+    val updateSourceUrl: String = com.example.data.local.AppUpdatePreferences.DEFAULT_UPDATE_URL,
+    val isUpdateSourceConfigOpen: Boolean = false
 )

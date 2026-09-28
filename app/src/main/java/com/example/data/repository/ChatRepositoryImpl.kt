@@ -38,6 +38,7 @@ class ChatRepositoryImpl(
     private val memoryDao: MemoryDao? = null,
     private val memoryPreferences: MemoryPreferences? = null,
     private val searchIntentDetector: SearchIntentDetector = DefaultSearchIntentDetector(),
+    private val imageRetrievalService: com.example.data.service.ImageRetrievalService = com.example.data.service.WikimediaImageRetrievalService(),
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 ) : ChatRepository {
 
@@ -76,8 +77,13 @@ class ChatRepositoryImpl(
                     val domainList = entities.map { it.toDomain() }
                     if (domainList.isNotEmpty()) {
                         _conversations.value = domainList
-                        if (_activeConversation.value == null) {
+                        val currentActiveId = _activeConversation.value?.id
+                        if (currentActiveId == null) {
                             selectConversation(domainList.first().id)
+                        } else {
+                            domainList.find { it.id == currentActiveId }?.let { updatedActive ->
+                                _activeConversation.value = updatedActive
+                            }
                         }
                     }
                 }
@@ -148,9 +154,7 @@ class ChatRepositoryImpl(
         if (conversationDao != null) {
             messagesCollectionJob = scope.launch {
                 conversationDao.getMessagesForConversation(conversationId).collect { entities ->
-                    if (entities.isNotEmpty()) {
-                        _messages.value = entities.map { it.toDomain() }
-                    }
+                    _messages.value = entities.map { it.toDomain() }
                 }
             }
         }
@@ -213,6 +217,7 @@ class ChatRepositoryImpl(
         _conversations.value = remaining
         inMemoryMessages.removeAll { it.conversationId == conversationId }
 
+        conversationDao?.clearMessages(conversationId)
         conversationDao?.deleteConversation(conversationId)
 
         if (_activeConversation.value?.id == conversationId) {
@@ -360,14 +365,23 @@ class ChatRepositoryImpl(
         _messages.value = _messages.value + userMessage
         persistMessage(userMessage, conv)
 
+        val isImageQuery = (searchIntentDetector as? DefaultSearchIntentDetector)?.isImageSearch(trimmed) == true
+        var retrievedImages: List<com.example.data.service.RetrievedImageResult> = emptyList()
+
+        if (isImageQuery) {
+            _searchPhase.value = SearchPhase.SEARCHING
+            val subject = (searchIntentDetector as? DefaultSearchIntentDetector)?.extractImageSubject(trimmed) ?: trimmed
+            retrievedImages = imageRetrievalService.searchImages(subject, maxResults = 2)
+        }
+
         val decision = searchIntentDetector.detect(
             query = trimmed,
             mode = config.searchMode,
             hasAttachments = attachments.isNotEmpty()
         )
-        val enableSearch = decision.needsSearch
+        val enableSearch = decision.needsSearch || (isImageQuery && retrievedImages.isEmpty())
 
-        return executeAiStreaming(conv, trimmed, config, attachments, enableSearch)
+        return executeAiStreaming(conv, trimmed, config, attachments, enableSearch, retrievedImages)
     }
 
     override suspend fun retryLastFailed(config: AiModelConfig): Result<ChatMessage> {
@@ -400,7 +414,8 @@ class ChatRepositoryImpl(
         prompt: String,
         config: AiModelConfig,
         attachments: List<com.example.domain.model.Attachment> = emptyList(),
-        enableSearch: Boolean = false
+        enableSearch: Boolean = false,
+        retrievedImages: List<com.example.data.service.RetrievedImageResult> = emptyList()
     ): Result<ChatMessage> = coroutineScope {
         _isGenerating.value = true
         if (enableSearch) {
@@ -415,6 +430,17 @@ class ChatRepositoryImpl(
         val accumulatedSources = mutableListOf<SearchSource>()
         var failureResult: Throwable? = null
         var completedMessage: ChatMessage? = null
+
+        // Add citations for retrieved images
+        for (img in retrievedImages) {
+            accumulatedSources.add(
+                SearchSource(
+                    title = "${img.title} (Wikimedia Commons)",
+                    url = img.sourceUrl,
+                    snippet = "Public image retrieved from ${img.attribution}"
+                )
+            )
+        }
 
         activeGenerationJob = coroutineContext[Job]
 
@@ -446,7 +472,24 @@ class ChatRepositoryImpl(
                 config
             }
 
-            aiService.generateStream(conv.id, prompt, boundedHistory, effectiveConfig, attachments, enableSearch)
+            val imageSystemInstructions = if (retrievedImages.isNotEmpty()) {
+                val imgContext = retrievedImages.joinToString("\n") { img ->
+                    "- Title: ${img.title}, Image URL: ${img.imageUrl}, Source: ${img.sourceUrl} (${img.attribution})"
+                }
+                "\n\n[RETRIEVED IMAGES]\nThe following free public images from Wikimedia Commons were found for this query:\n$imgContext\n\nInstructions:\n- Include the image using markdown: `![Title](imageUrl)`.\n- Clearly mention it was retrieved from Wikimedia Commons (never claim it was generated).\n- Provide the source link."
+            } else if (retrievedImages.isEmpty() && (searchIntentDetector as? DefaultSearchIntentDetector)?.isImageSearch(prompt) == true) {
+                "\n\n[IMAGE RETRIEVAL NOTICE]\nNo free public images from Wikimedia Commons could be found for this request. Gracefully explain that a free public image was unavailable, rather than inventing a broken or fake link."
+            } else {
+                ""
+            }
+
+            val finalEffectiveConfig = if (imageSystemInstructions.isNotBlank()) {
+                effectiveConfig.copy(systemPrompt = effectiveConfig.systemPrompt + imageSystemInstructions)
+            } else {
+                effectiveConfig
+            }
+
+            aiService.generateStream(conv.id, prompt, boundedHistory, finalEffectiveConfig, attachments, enableSearch)
                 .collect { chunk ->
                     if (chunk.isSearching) {
                         _searchPhase.value = SearchPhase.SEARCHING
@@ -492,7 +535,17 @@ class ChatRepositoryImpl(
                         }
                     } else {
                         _searchPhase.value = SearchPhase.IDLE
-                        val finalContent = textAccumulator.toString().trim()
+                        var finalContent = textAccumulator.toString().trim()
+                        if (retrievedImages.isNotEmpty() && !finalContent.contains("![") && !finalContent.contains(retrievedImages.first().imageUrl)) {
+                            val appendix = buildString {
+                                append("\n\n")
+                                for (img in retrievedImages) {
+                                    append("![${img.title}](${img.imageUrl})\n*Retrieved image from ${img.attribution} • [View source](${img.sourceUrl})*\n\n")
+                                }
+                            }
+                            finalContent = (finalContent + appendix).trim()
+                        }
+
                         val finalMsg = ChatMessage(
                             id = assistantMsgId,
                             conversationId = conv.id,

@@ -47,35 +47,25 @@ class StartupWelcomeScreenTest {
     }
 
     @Test
-    fun `welcome chat screen shows How can Mayra help you today and 3 simple language options`() {
-        var clickedPrompt: String? = null
-
+    fun `welcome chat screen shows clean home with logo heading and subtitle without manual language buttons`() {
         composeTestRule.setContent {
             MayraAITheme(darkTheme = true) {
-                EmptyChatView(
-                    onSuggestionClicked = { clickedPrompt = it }
-                )
+                EmptyChatView()
             }
         }
 
-        // Verify headline
+        // Verify Mayra logo emblem is displayed
+        composeTestRule.onNodeWithTag("mayra_logo").assertIsDisplayed()
+
+        // Verify clean headline
         composeTestRule.onNodeWithText("How can Mayra help you today?").assertIsDisplayed()
 
-        // Verify the 3 requested language options are displayed
-        composeTestRule.onNodeWithText("বাংলা").assertIsDisplayed()
-        composeTestRule.onNodeWithText("English").assertIsDisplayed()
-        composeTestRule.onNodeWithText("हिंदी").assertIsDisplayed()
+        // Verify clean subtitle
+        composeTestRule.onNodeWithText("Ask anything, explore ideas, or search the web in any language.").assertIsDisplayed()
 
-        // Test clicking Bengali starter
-        composeTestRule.onNodeWithText("বাংলা").performClick()
-        assertEquals("নমস্কার Mayra! আমি বাংলায় কথা বলতে চাই।", clickedPrompt)
-
-        // Test clicking English starter
-        composeTestRule.onNodeWithText("English").performClick()
-        assertEquals("Hello Mayra! Let's get started in English.", clickedPrompt)
-
-        // Test clicking Hindi starter
-        composeTestRule.onNodeWithText("हिंदी").performClick()
-        assertEquals("नमस्ते Mayra! चलिए हिंदी में बातचीत शुरू करते हैं।", clickedPrompt)
+        // Verify that manual language buttons (বাংলা, English, हिंदी) are removed as required
+        composeTestRule.onNodeWithText("বাংলা").assertDoesNotExist()
+        composeTestRule.onNodeWithText("English").assertDoesNotExist()
+        composeTestRule.onNodeWithText("हिंदी").assertDoesNotExist()
     }
 }
