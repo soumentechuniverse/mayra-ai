@@ -48,7 +48,7 @@ class GeminiService(
     companion object {
         private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
-        private const val MAX_TRANSIENT_RETRIES = 2
+        private const val MAX_TRANSIENT_RETRIES = 3
         private const val PLACEHOLDER_KEY = "MY_GEMINI_API_KEY"
 
         private fun createDefaultClient(): OkHttpClient {
@@ -140,6 +140,7 @@ class GeminiService(
 
         var attempt = 0
         var streamSuccess = false
+        var hasEmittedAnyChunk = false
 
         while (!streamSuccess && attempt <= MAX_TRANSIENT_RETRIES) {
             currentCoroutineContext().ensureActive()
@@ -154,7 +155,6 @@ class GeminiService(
                     val body = response.body
                         ?: throw IllegalStateException("Gemini server returned an empty response body.")
 
-                    var receivedAnyChunk = false
                     val accumulatedSources = mutableListOf<SearchSource>()
                     val seenUrls = mutableSetOf<String>()
                     val reader = body.byteStream().bufferedReader(Charsets.UTF_8)
@@ -196,7 +196,7 @@ class GeminiService(
                             // 2. Parse text delta
                             val deltaText = parseTextDelta(jsonPayload)
                             if (!deltaText.isNullOrEmpty()) {
-                                receivedAnyChunk = true
+                                hasEmittedAnyChunk = true
                                 emit(
                                     AiStreamChunk(
                                         conversationId = conversationId,
@@ -209,7 +209,7 @@ class GeminiService(
                         }
                     }
 
-                    if (!receivedAnyChunk) {
+                    if (!hasEmittedAnyChunk) {
                         throw IllegalStateException("No text content received from Gemini model response.")
                     }
 
@@ -229,9 +229,16 @@ class GeminiService(
             } catch (e: Exception) {
                 call.cancel()
                 val isTransient = isTransientError(e)
-                if (isTransient && attempt < MAX_TRANSIENT_RETRIES) {
+                if (isTransient && attempt < MAX_TRANSIENT_RETRIES && !hasEmittedAnyChunk) {
                     attempt++
-                    delay(1000L * attempt)
+                    val retryAfterSeconds = (e as? GeminiApiException)?.retryAfterSeconds
+                    val backoffMs = if (retryAfterSeconds != null && retryAfterSeconds in 1..10) {
+                        retryAfterSeconds * 1000L
+                    } else {
+                        // Exponential backoff with jitter: attempt 1 = ~1.5s, attempt 2 = ~3s, attempt 3 = ~6s
+                        (1500L * (1 shl (attempt - 1))) + (50L..250L).random()
+                    }
+                    delay(backoffMs)
                 } else {
                     throw e
                 }
@@ -440,18 +447,19 @@ class GeminiService(
             null
         }
 
+        val retryAfter = response.header("Retry-After")?.toLongOrNull()
         val apiMessage = extractErrorFromResponse(rawBody)?.replace(apiKey, "[REDACTED]")
 
         val userMessage = when (code) {
             400 -> "Request error (400): ${apiMessage ?: "Invalid parameters or model configuration."}"
             401, 403 -> "Authentication failed (401/403): Invalid or unauthorized Gemini API key. Please check your key in the AI Studio Secrets panel."
             404 -> "Model not found (404): The requested model '$modelId' is unavailable. Please select an available model in Settings."
-            429 -> "Rate limit reached (429): Quota exceeded. Please wait a moment and tap Retry."
-            in 500..599 -> "Gemini server error ($code): Service is temporarily unavailable. Please tap Retry in a few seconds."
+            429 -> "Mayra AI service is experiencing high demand right now (429). Please wait a moment and tap Retry."
+            in 500..599 -> "Mayra AI service is temporarily busy ($code). Please tap Retry in a few seconds."
             else -> "Gemini error ($code): ${apiMessage ?: "Unexpected response from Gemini service."}"
         }
 
-        throw GeminiApiException(code, userMessage)
+        throw GeminiApiException(code, userMessage, retryAfter)
     }
 
     private fun extractErrorFromResponse(rawBody: String?): String? {
@@ -473,4 +481,8 @@ class GeminiService(
     }
 }
 
-class GeminiApiException(val statusCode: Int, message: String) : Exception(message)
+class GeminiApiException(
+    val statusCode: Int,
+    message: String,
+    val retryAfterSeconds: Long? = null
+) : Exception(message)

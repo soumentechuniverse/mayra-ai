@@ -12,7 +12,7 @@ enum class VoiceLanguage(
     val locale: Locale?
 ) {
     AUTO("auto", "Auto Detect", "স্বয়ংক্রিয়", null),
-    BENGALI("bn-BD", "Bengali", "বাংলা", Locale("bn", "BD")),
+    BENGALI("bn-IN", "Bengali (India)", "বাংলা", Locale("bn", "IN")),
     ENGLISH("en-US", "English", "English", Locale("en", "US")),
     HINDI("hi-IN", "Hindi", "हिन्दी", Locale("hi", "IN")),
     URDU("ur-PK", "Urdu", "اردو", Locale("ur", "PK")),

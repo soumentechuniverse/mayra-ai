@@ -77,13 +77,8 @@ class ChatRepositoryImpl(
                     val domainList = entities.map { it.toDomain() }
                     if (domainList.isNotEmpty()) {
                         _conversations.value = domainList
-                        val currentActiveId = _activeConversation.value?.id
-                        if (currentActiveId == null) {
+                        if (_activeConversation.value == null) {
                             selectConversation(domainList.first().id)
-                        } else {
-                            domainList.find { it.id == currentActiveId }?.let { updatedActive ->
-                                _activeConversation.value = updatedActive
-                            }
                         }
                     }
                 }
@@ -154,7 +149,9 @@ class ChatRepositoryImpl(
         if (conversationDao != null) {
             messagesCollectionJob = scope.launch {
                 conversationDao.getMessagesForConversation(conversationId).collect { entities ->
-                    _messages.value = entities.map { it.toDomain() }
+                    if (entities.isNotEmpty()) {
+                        _messages.value = entities.map { it.toDomain() }
+                    }
                 }
             }
         }
@@ -217,7 +214,6 @@ class ChatRepositoryImpl(
         _conversations.value = remaining
         inMemoryMessages.removeAll { it.conversationId == conversationId }
 
-        conversationDao?.clearMessages(conversationId)
         conversationDao?.deleteConversation(conversationId)
 
         if (_activeConversation.value?.id == conversationId) {
@@ -323,6 +319,9 @@ class ChatRepositoryImpl(
 
         cancelGeneration()
 
+        // Remove any previous empty error card placeholders so repeated error cards do not stack up
+        _messages.value = _messages.value.filterNot { it.status == MessageStatus.ERROR && it.content.isBlank() }
+
         var conv = _activeConversation.value
         if (conv == null) {
             conv = startNewConversation()
@@ -401,12 +400,22 @@ class ChatRepositoryImpl(
         _messages.value = updated
 
         val conv = _activeConversation.value ?: startNewConversation()
+        val isImageQuery = (searchIntentDetector as? DefaultSearchIntentDetector)?.isImageSearch(userMsg.content) == true
+        var retrievedImages: List<com.example.data.service.RetrievedImageResult> = emptyList()
+
+        if (isImageQuery) {
+            _searchPhase.value = SearchPhase.SEARCHING
+            val subject = (searchIntentDetector as? DefaultSearchIntentDetector)?.extractImageSubject(userMsg.content) ?: userMsg.content
+            retrievedImages = imageRetrievalService.searchImages(subject, maxResults = 2)
+        }
+
         val decision = searchIntentDetector.detect(
             query = userMsg.content,
             mode = config.searchMode,
             hasAttachments = userMsg.attachments.isNotEmpty()
         )
-        return executeAiStreaming(conv, userMsg.content, config, emptyList(), decision.needsSearch)
+        val enableSearch = decision.needsSearch || (isImageQuery && retrievedImages.isEmpty())
+        return executeAiStreaming(conv, userMsg.content, config, emptyList(), enableSearch, retrievedImages)
     }
 
     private suspend fun executeAiStreaming(

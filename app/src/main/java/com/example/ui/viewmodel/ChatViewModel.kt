@@ -261,6 +261,11 @@ class ChatViewModel(
                 textToSpeechService?.stop()
                 speechRecognizerService?.stopListening()
 
+                if (repository.isGenerating.value) {
+                    // Prevent duplicate concurrent requests
+                    return
+                }
+
                 val currentText = _inputText.value.trim()
                 val attachments = _pendingAttachments.value
                 if (currentText.isEmpty() && attachments.isEmpty()) {
@@ -271,36 +276,26 @@ class ChatViewModel(
                 _pendingAttachments.value = emptyList()
                 _bannerError.value = null
                 viewModelScope.launch {
-                    val result = repository.sendMessage(currentText, _selectedModel.value, attachments)
-                    if (result.isFailure) {
-                        _bannerError.value = result.exceptionOrNull()?.localizedMessage
-                            ?: "Mayra AI service request failed. Tap retry to reconnect."
-                    }
+                    repository.sendMessage(currentText, _selectedModel.value, attachments)
                 }
             }
 
             is ChatUiEvent.SuggestionClicked -> {
                 textToSpeechService?.stop()
+                if (repository.isGenerating.value) return
                 _inputText.value = ""
                 _bannerError.value = null
                 viewModelScope.launch {
-                    val result = repository.sendMessage(event.prompt, _selectedModel.value, emptyList())
-                    if (result.isFailure) {
-                        _bannerError.value = result.exceptionOrNull()?.localizedMessage
-                            ?: "Mayra AI service request failed. Tap retry to reconnect."
-                    }
+                    repository.sendMessage(event.prompt, _selectedModel.value, emptyList())
                 }
             }
 
             ChatUiEvent.RetryLastFailed -> {
                 textToSpeechService?.stop()
+                if (repository.isGenerating.value) return
                 _bannerError.value = null
                 viewModelScope.launch {
-                    val result = repository.retryLastFailed(_selectedModel.value)
-                    if (result.isFailure) {
-                        _bannerError.value = result.exceptionOrNull()?.localizedMessage
-                            ?: "Retry failed. Please check network connection."
-                    }
+                    repository.retryLastFailed(_selectedModel.value)
                 }
             }
 

@@ -175,7 +175,7 @@ class AndroidTextToSpeechService(
         // Automatic detection for Bengali Unicode script range (\u0980-\u09FF)
         val hasBengaliScript = text.any { it in '\u0980'..'\u09FF' }
         if (hasBengaliScript) {
-            return Locale("bn", "BD")
+            return Locale("bn", "IN")
         }
 
         // Automatic detection for Devanagari script range (\u0900-\u097F)
