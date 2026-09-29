@@ -24,16 +24,21 @@ jobs:
 
       - name: Configure Secrets
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || secrets.GOOGLE_API_KEY || vars.GEMINI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         run: |
-          if [ -n "$GEMINI_API_KEY" ]; then
-            echo "GEMINI_API_KEY=$GEMINI_API_KEY" >> .env
+          API_KEY="${GEMINI_API_KEY:-$GOOGLE_API_KEY}"
+          if [ -n "$API_KEY" ]; then
+            echo "Injecting GEMINI_API_KEY into .env and local.properties"
+            echo "GEMINI_API_KEY=$API_KEY" > .env
+            echo "GEMINI_API_KEY=$API_KEY" > app/.env
+            echo "GEMINI_API_KEY=$API_KEY" >> local.properties
           fi
 
       - name: Build Debug APK
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || secrets.GOOGLE_API_KEY || vars.GEMINI_API_KEY }}
-        run: ./gradlew assembleDebug
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || secrets.GOOGLE_API_KEY }}
+        run: ./gradlew assembleDebug -PGEMINI_API_KEY="${{ secrets.GEMINI_API_KEY || secrets.GOOGLE_API_KEY }}"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

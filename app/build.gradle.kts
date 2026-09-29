@@ -66,15 +66,55 @@ android {
 }
 
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
-// to match the convention used in Web projects.
+// Resolves GEMINI_API_KEY from environment variables (GitHub Actions secrets / CI),
+// Gradle properties, .env files, or local.properties before the plugin generates BuildConfig.
 val envFile = rootProject.file(".env")
-val envApiKey = System.getenv("GEMINI_API_KEY")
-  ?: System.getenv("GOOGLE_API_KEY")
-  ?: (project.findProperty("GEMINI_API_KEY") as? String)
+val appEnvFile = project.file(".env")
+val localPropsFile = rootProject.file("local.properties")
 
-if (!envApiKey.isNullOrBlank()) {
-  val existingLines = if (envFile.exists()) envFile.readLines().filter { !it.startsWith("GEMINI_API_KEY=") } else emptyList()
-  envFile.writeText((existingLines + "GEMINI_API_KEY=$envApiKey").joinToString("\n") + "\n")
+val envApiKey = System.getenv("GEMINI_API_KEY")
+  ?: (project.findProperty("GEMINI_API_KEY") as? String)
+  ?: System.getenv("GOOGLE_API_KEY")
+  ?: (project.findProperty("GOOGLE_API_KEY") as? String)
+
+val resolvedApiKey = envApiKey?.trim()?.removeSurrounding("\"")?.takeIf { it.isNotBlank() }
+  ?: run {
+    if (envFile.exists()) {
+      envFile.readLines()
+        .firstOrNull { it.trim().startsWith("GEMINI_API_KEY=") }
+        ?.substringAfter("GEMINI_API_KEY=")
+        ?.trim()
+        ?.removeSurrounding("\"")
+    } else null
+  }?.takeIf { it.isNotBlank() && it != "MY_GEMINI_API_KEY" }
+  ?: run {
+    if (localPropsFile.exists()) {
+      localPropsFile.readLines()
+        .firstOrNull { it.trim().startsWith("GEMINI_API_KEY=") }
+        ?.substringAfter("GEMINI_API_KEY=")
+        ?.trim()
+        ?.removeSurrounding("\"")
+    } else null
+  }?.takeIf { it.isNotBlank() && it != "MY_GEMINI_API_KEY" }
+  ?: run {
+    if (appEnvFile.exists()) {
+      appEnvFile.readLines()
+        .firstOrNull { it.trim().startsWith("GEMINI_API_KEY=") }
+        ?.substringAfter("GEMINI_API_KEY=")
+        ?.trim()
+        ?.removeSurrounding("\"")
+    } else null
+  }?.takeIf { it.isNotBlank() && it != "MY_GEMINI_API_KEY" }
+
+if (!resolvedApiKey.isNullOrBlank() && resolvedApiKey != "MY_GEMINI_API_KEY") {
+  val existingLines = if (envFile.exists()) envFile.readLines().filter { !it.trim().startsWith("GEMINI_API_KEY=") } else emptyList()
+  envFile.writeText((existingLines + "GEMINI_API_KEY=$resolvedApiKey").joinToString("\n") + "\n")
+
+  val appLines = if (appEnvFile.exists()) appEnvFile.readLines().filter { !it.trim().startsWith("GEMINI_API_KEY=") } else emptyList()
+  appEnvFile.writeText((appLines + "GEMINI_API_KEY=$resolvedApiKey").joinToString("\n") + "\n")
+
+  val localLines = if (localPropsFile.exists()) localPropsFile.readLines().filter { !it.trim().startsWith("GEMINI_API_KEY=") } else emptyList()
+  localPropsFile.writeText((localLines + "GEMINI_API_KEY=$resolvedApiKey").joinToString("\n") + "\n")
 }
 
 secrets {

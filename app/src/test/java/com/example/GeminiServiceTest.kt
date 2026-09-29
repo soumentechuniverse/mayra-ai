@@ -127,4 +127,129 @@ class GeminiServiceTest {
             assertFalse(e.message?.contains("AIzaSyFakeKeyTest123") == true)
         }
     }
+
+    @Test
+    fun `generateStream retries on HTTP 503 and succeeds on subsequent attempt`() = runBlocking {
+        var callCount = 0
+        val sseData = """
+            data: {"candidates": [{"content": {"parts": [{"text": "Success after 503"}], "role": "model"}}]}
+            data: [DONE]
+        """.trimIndent()
+
+        val mockClient = OkHttpClient.Builder()
+            .addInterceptor(Interceptor { chain ->
+                callCount++
+                if (callCount == 1) {
+                    Response.Builder()
+                        .request(chain.request())
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(503)
+                        .header("Retry-After", "1")
+                        .message("Service Unavailable")
+                        .body("""{"error": {"code": 503, "message": "The model is overloaded."}}""".toResponseBody("application/json".toMediaType()))
+                        .build()
+                } else {
+                    Response.Builder()
+                        .request(chain.request())
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .body(sseData.toResponseBody("text/event-stream".toMediaType()))
+                        .build()
+                }
+            })
+            .build()
+
+        val service = GeminiService(
+            apiKeyProvider = { "AIzaSyFakeKeyTest123" },
+            okHttpClient = mockClient
+        )
+
+        val chunks = service.generateStream("conv-1", "Hi", emptyList(), AiModelConfig()).toList()
+        assertTrue(callCount >= 2)
+        assertTrue(chunks.any { it.textDelta == "Success after 503" })
+    }
+
+    @Test
+    fun `generateStream falls back to available model when primary model returns 503`() = runBlocking {
+        val requestedModels = mutableListOf<String>()
+        val sseData = """
+            data: {"candidates": [{"content": {"parts": [{"text": "Response from fallback model"}], "role": "model"}}]}
+            data: [DONE]
+        """.trimIndent()
+
+        val mockClient = OkHttpClient.Builder()
+            .addInterceptor(Interceptor { chain ->
+                val url = chain.request().url.toString()
+                when {
+                    url.contains("/models/gemini-flash-latest:") -> {
+                        requestedModels.add("gemini-flash-latest")
+                        Response.Builder()
+                            .request(chain.request())
+                            .protocol(Protocol.HTTP_1_1)
+                            .code(503)
+                            .header("Retry-After", "1")
+                            .message("Service Unavailable")
+                            .body("""{"error": {"code": 503, "message": "Overloaded"}}""".toResponseBody("application/json".toMediaType()))
+                            .build()
+                    }
+                    else -> {
+                        requestedModels.add("fallback")
+                        Response.Builder()
+                            .request(chain.request())
+                            .protocol(Protocol.HTTP_1_1)
+                            .code(200)
+                            .message("OK")
+                            .body(sseData.toResponseBody("text/event-stream".toMediaType()))
+                            .build()
+                    }
+                }
+            })
+            .build()
+
+        val service = GeminiService(
+            apiKeyProvider = { "AIzaSyFakeKeyTest123" },
+            okHttpClient = mockClient
+        )
+
+        val chunks = service.generateStream(
+            "conv-1",
+            "Hi",
+            emptyList(),
+            AiModelConfig(modelId = "gemini-flash-latest")
+        ).toList()
+
+        assertTrue("Should have attempted gemini-flash-latest", requestedModels.contains("gemini-flash-latest"))
+        assertTrue("Should have attempted fallback model", requestedModels.contains("fallback"))
+        assertTrue(chunks.any { it.textDelta == "Response from fallback model" })
+    }
+
+    @Test
+    fun `generateStream throws clean GeminiApiException on persistent 503 after retries`() = runBlocking {
+        val mockClient = OkHttpClient.Builder()
+            .addInterceptor(Interceptor { chain ->
+                Response.Builder()
+                    .request(chain.request())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(503)
+                    .header("Retry-After", "1")
+                    .message("Service Unavailable")
+                    .body("""{"error": {"code": 503, "message": "Service unavailable"}}""".toResponseBody("application/json".toMediaType()))
+                    .build()
+            })
+            .build()
+
+        val service = GeminiService(
+            apiKeyProvider = { "AIzaSyFakeKeyTest123" },
+            okHttpClient = mockClient
+        )
+
+        try {
+            service.generateStream("conv-1", "Hi", emptyList(), AiModelConfig()).toList()
+            fail("Expected exception when all retries fail")
+        } catch (e: GeminiApiException) {
+            assertEquals(503, e.statusCode)
+            assertTrue(e.message?.contains("temporarily unavailable") == true)
+        }
+    }
 }

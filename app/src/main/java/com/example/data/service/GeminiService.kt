@@ -129,121 +129,161 @@ class GeminiService(
             )
         }
 
-        val requestPayload = buildRequestJson(effectivePrompt, history, config, attachments, enableSearch)
-        val endpoint = "$BASE_URL/${config.modelId}:streamGenerateContent?alt=sse&key=$apiKey"
+        // Build candidate models: primary requested model first, followed by available fallback models
+        val candidateConfigs = buildList {
+            add(config)
+            for (available in AiModelConfig.AvailableModels) {
+                if (available.modelId != config.modelId && none { it.modelId == available.modelId }) {
+                    add(config.copy(modelId = available.modelId, displayName = available.displayName))
+                }
+            }
+        }
 
-        val request = Request.Builder()
-            .url(endpoint)
-            .post(requestPayload.toString().toRequestBody(JSON_MEDIA_TYPE))
-            .header("Accept", "text/event-stream")
-            .build()
-
-        var attempt = 0
-        var streamSuccess = false
         var hasEmittedAnyChunk = false
+        var lastException: Exception? = null
 
-        while (!streamSuccess && attempt <= MAX_TRANSIENT_RETRIES) {
-            currentCoroutineContext().ensureActive()
-            val call = okHttpClient.newCall(request)
+        for (currentConfig in candidateConfigs) {
+            // Once tokens have reached the user, we cannot switch models or restart
+            if (hasEmittedAnyChunk) break
 
-            try {
-                call.execute().use { response ->
-                    if (!response.isSuccessful) {
-                        handleHttpError(response, apiKey, config.modelId)
-                    }
+            val isPrimary = (currentConfig.modelId == config.modelId)
+            val maxRetriesForThisModel = if (isPrimary) MAX_TRANSIENT_RETRIES else 1
+            var attempt = 0
 
-                    val body = response.body
-                        ?: throw IllegalStateException("Gemini server returned an empty response body.")
+            val requestPayload = buildRequestJson(effectivePrompt, history, currentConfig, attachments, enableSearch)
+            val endpoint = "$BASE_URL/${currentConfig.modelId}:streamGenerateContent?alt=sse&key=$apiKey"
 
-                    val accumulatedSources = mutableListOf<SearchSource>()
-                    val seenUrls = mutableSetOf<String>()
-                    val reader = body.byteStream().bufferedReader(Charsets.UTF_8)
+            val request = Request.Builder()
+                .url(endpoint)
+                .post(requestPayload.toString().toRequestBody(JSON_MEDIA_TYPE))
+                .header("Accept", "text/event-stream")
+                .build()
 
-                    reader.use {
-                        var line: String?
-                        while (it.readLine().also { l -> line = l } != null) {
-                            currentCoroutineContext().ensureActive()
-                            val rawLine = line?.trim() ?: continue
-                            if (!rawLine.startsWith("data:")) continue
+            while (attempt <= maxRetriesForThisModel) {
+                currentCoroutineContext().ensureActive()
+                val call = okHttpClient.newCall(request)
 
-                            val jsonPayload = rawLine.removePrefix("data:").trim()
-                            if (jsonPayload.isEmpty() || jsonPayload == "[DONE]") continue
+                try {
+                    call.execute().use { response ->
+                        if (!response.isSuccessful) {
+                            handleHttpError(response, apiKey, currentConfig.modelId)
+                        }
 
-                            // 1. Parse grounding metadata (web search queries & chunks)
-                            val grounding = parseGroundingMetadata(jsonPayload)
-                            if (grounding != null) {
-                                val (queries, sources) = grounding
-                                val newSources = mutableListOf<SearchSource>()
-                                for (s in sources) {
-                                    if (seenUrls.add(s.url)) {
-                                        accumulatedSources.add(s)
-                                        newSources.add(s)
+                        val body = response.body
+                            ?: throw IllegalStateException("Gemini server returned an empty response body.")
+
+                        val accumulatedSources = mutableListOf<SearchSource>()
+                        val seenUrls = mutableSetOf<String>()
+                        val reader = body.byteStream().bufferedReader(Charsets.UTF_8)
+
+                        reader.use {
+                            var line: String?
+                            while (it.readLine().also { l -> line = l } != null) {
+                                currentCoroutineContext().ensureActive()
+                                val rawLine = line?.trim() ?: continue
+                                if (!rawLine.startsWith("data:")) continue
+
+                                val jsonPayload = rawLine.removePrefix("data:").trim()
+                                if (jsonPayload.isEmpty() || jsonPayload == "[DONE]") continue
+
+                                // 1. Parse grounding metadata (web search queries & chunks)
+                                val grounding = parseGroundingMetadata(jsonPayload)
+                                if (grounding != null) {
+                                    val (queries, sources) = grounding
+                                    val newSources = mutableListOf<SearchSource>()
+                                    for (s in sources) {
+                                        if (seenUrls.add(s.url)) {
+                                            accumulatedSources.add(s)
+                                            newSources.add(s)
+                                        }
+                                    }
+                                    if (queries.isNotEmpty() || newSources.isNotEmpty()) {
+                                        emit(
+                                            AiStreamChunk(
+                                                conversationId = conversationId,
+                                                textDelta = "",
+                                                searchQueries = queries,
+                                                searchSources = accumulatedSources.toList(),
+                                                isSearching = false
+                                            )
+                                        )
                                     }
                                 }
-                                if (queries.isNotEmpty() || newSources.isNotEmpty()) {
+
+                                // 2. Parse text delta
+                                val deltaText = parseTextDelta(jsonPayload)
+                                if (!deltaText.isNullOrEmpty()) {
+                                    hasEmittedAnyChunk = true
                                     emit(
                                         AiStreamChunk(
                                             conversationId = conversationId,
-                                            textDelta = "",
-                                            searchQueries = queries,
-                                            searchSources = accumulatedSources.toList(),
-                                            isSearching = false
+                                            textDelta = deltaText,
+                                            isComplete = false,
+                                            searchSources = accumulatedSources.toList()
                                         )
                                     )
                                 }
                             }
-
-                            // 2. Parse text delta
-                            val deltaText = parseTextDelta(jsonPayload)
-                            if (!deltaText.isNullOrEmpty()) {
-                                hasEmittedAnyChunk = true
-                                emit(
-                                    AiStreamChunk(
-                                        conversationId = conversationId,
-                                        textDelta = deltaText,
-                                        isComplete = false,
-                                        searchSources = accumulatedSources.toList()
-                                    )
-                                )
-                            }
                         }
-                    }
 
-                    if (!hasEmittedAnyChunk) {
-                        throw IllegalStateException("No text content received from Gemini model response.")
-                    }
+                        if (!hasEmittedAnyChunk) {
+                            throw IllegalStateException("No text content received from Gemini model response.")
+                        }
 
-                    emit(
-                        AiStreamChunk(
-                            conversationId = conversationId,
-                            textDelta = "",
-                            isComplete = true,
-                            searchSources = accumulatedSources.toList()
+                        emit(
+                            AiStreamChunk(
+                                conversationId = conversationId,
+                                textDelta = "",
+                                isComplete = true,
+                                searchSources = accumulatedSources.toList()
+                            )
                         )
-                    )
-                    streamSuccess = true
-                }
-            } catch (e: CancellationException) {
-                call.cancel()
-                throw e
-            } catch (e: Exception) {
-                call.cancel()
-                val isTransient = isTransientError(e)
-                if (isTransient && attempt < MAX_TRANSIENT_RETRIES && !hasEmittedAnyChunk) {
-                    attempt++
-                    val retryAfterSeconds = (e as? GeminiApiException)?.retryAfterSeconds
-                    val backoffMs = if (retryAfterSeconds != null && retryAfterSeconds in 1..10) {
-                        retryAfterSeconds * 1000L
-                    } else {
-                        // Exponential backoff with jitter: attempt 1 = ~1.5s, attempt 2 = ~3s, attempt 3 = ~6s
-                        (1500L * (1 shl (attempt - 1))) + (50L..250L).random()
+                        return@flow // Completed successfully
                     }
-                    delay(backoffMs)
-                } else {
+                } catch (e: CancellationException) {
+                    call.cancel()
                     throw e
+                } catch (e: Exception) {
+                    call.cancel()
+                    lastException = e
+
+                    // If chunks were already emitted to UI, do not retry or switch models
+                    if (hasEmittedAnyChunk) {
+                        throw e
+                    }
+
+                    val isTransient = isTransientError(e)
+                    val isModelUnavailable = isModelUnavailableError(e)
+
+                    if (isTransient && attempt < maxRetriesForThisModel) {
+                        attempt++
+                        val retryAfterSeconds = (e as? GeminiApiException)?.retryAfterSeconds
+                        val backoffMs = if (retryAfterSeconds != null && retryAfterSeconds in 1..60) {
+                            retryAfterSeconds * 1000L
+                        } else {
+                            // Exponential backoff with jitter: ~2s for attempt 1, ~4s for attempt 2, ~8s for attempt 3
+                            val baseMs = when (attempt) {
+                                1 -> 2000L
+                                2 -> 4000L
+                                3 -> 8000L
+                                else -> 8000L
+                            }
+                            baseMs + (50L..300L).random()
+                        }
+                        delay(backoffMs)
+                    } else if (isModelUnavailable) {
+                        // Current model unavailable after retries; break inner loop to try next candidate fallback model
+                        break
+                    } else {
+                        // Non-transient error (e.g. 401 unauthorized, 400 bad request)
+                        throw e
+                    }
                 }
             }
         }
+
+        // All retries and candidate models failed; throw final exception so UI can display retry button
+        throw (lastException ?: IllegalStateException("Mayra AI service is currently unavailable. Please tap Retry."))
     }.flowOn(Dispatchers.IO)
 
     private fun resolveDefaultPrompt(attachments: List<com.example.domain.model.Attachment>): String {
@@ -455,6 +495,7 @@ class GeminiService(
             401, 403 -> "Authentication failed (401/403): Invalid or unauthorized Gemini API key. Please check your key in the AI Studio Secrets panel."
             404 -> "Model not found (404): The requested model '$modelId' is unavailable. Please select an available model in Settings."
             429 -> "Mayra AI service is experiencing high demand right now (429). Please wait a moment and tap Retry."
+            503 -> "Mayra AI service is temporarily unavailable (503). The server is busy or overloaded. Please tap Retry in a few moments."
             in 500..599 -> "Mayra AI service is temporarily busy ($code). Please tap Retry in a few seconds."
             else -> "Gemini error ($code): ${apiMessage ?: "Unexpected response from Gemini service."}"
         }
@@ -475,8 +516,19 @@ class GeminiService(
     private fun isTransientError(throwable: Throwable): Boolean {
         if (throwable is IOException) return true
         if (throwable is GeminiApiException) {
-            return throwable.statusCode == 429 || throwable.statusCode in 500..599
+            return throwable.statusCode == 429 || throwable.statusCode == 503 || throwable.statusCode in 500..599
         }
+        return false
+    }
+
+    private fun isModelUnavailableError(throwable: Throwable): Boolean {
+        if (throwable is GeminiApiException) {
+            return throwable.statusCode == 503 ||
+                    throwable.statusCode == 404 ||
+                    throwable.statusCode == 429 ||
+                    throwable.statusCode in 500..599
+        }
+        if (throwable is IOException) return true
         return false
     }
 }
