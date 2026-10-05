@@ -7,6 +7,7 @@ import com.example.data.local.entity.ChatMessageEntity
 import com.example.data.local.entity.ConversationEntity
 import com.example.data.local.entity.MemoryItemEntity
 import com.example.data.service.DefaultSearchIntentDetector
+import com.example.data.service.ImageGenerationService
 import com.example.data.service.ImageRetrievalService
 import com.example.data.service.RetrievedImageResult
 import com.example.domain.model.AiModelConfig
@@ -45,6 +46,8 @@ class ChatRepositoryImpl(
         DefaultSearchIntentDetector(),
     private val imageRetrievalService: ImageRetrievalService =
         com.example.data.service.WikimediaImageRetrievalService(),
+    private val imageGenerationService: ImageGenerationService =
+        ImageGenerationService(),
     private val scope: CoroutineScope =
         CoroutineScope(SupervisorJob() + Dispatchers.IO)
 ) : ChatRepository {
@@ -675,9 +678,6 @@ class ChatRepositoryImpl(
 
         cancelGeneration()
 
-        /*
-         * Remove old empty error placeholders.
-         */
         _messages.value =
             _messages.value.filterNot {
                 it.status == MessageStatus.ERROR &&
@@ -692,9 +692,6 @@ class ChatRepositoryImpl(
                 startNewConversation()
         }
 
-        /*
-         * Auto title.
-         */
         if (
             conversation.title == "New Chat" &&
             _messages.value.none {
@@ -756,9 +753,6 @@ class ChatRepositoryImpl(
             )
         }
 
-        /*
-         * Explicit memory requests only.
-         */
         if (
             _isMemoryEnabled.value &&
             prompt.isNotEmpty()
@@ -808,9 +802,29 @@ class ChatRepositoryImpl(
             attachments
         )
 
-        /*
-         * Image search.
-         */
+        // -----------------------------------------------------
+        // AI IMAGE GENERATION
+        // -----------------------------------------------------
+        //
+        // IMPORTANT:
+        // "show/find/search image" is NOT treated as generation.
+        // Only clear create/draw/generate requests reach the
+        // image-generation model.
+        //
+        if (
+            isImageGenerationRequest(prompt)
+        ) {
+
+            return generateAiImage(
+                conversation = conversation,
+                prompt = prompt
+            )
+        }
+
+        // -----------------------------------------------------
+        // IMAGE SEARCH
+        // -----------------------------------------------------
+
         val detector =
             searchIntentDetector as?
                 DefaultSearchIntentDetector
@@ -838,9 +852,10 @@ class ChatRepositoryImpl(
                 )
         }
 
-        /*
-         * Web search decision.
-         */
+        // -----------------------------------------------------
+        // WEB SEARCH
+        // -----------------------------------------------------
+
         val decision =
             searchIntentDetector.detect(
                 query = prompt,
@@ -892,9 +907,6 @@ class ChatRepositoryImpl(
             )
         }
 
-        /*
-         * Find the latest USER message before the error.
-         */
         val userMessage =
             current
                 .take(errorIndex)
@@ -908,10 +920,6 @@ class ChatRepositoryImpl(
                     )
                 )
 
-        /*
-         * Remove ONLY the error message.
-         * Keep the original user message.
-         */
         _messages.value =
             current.filterIndexed {
                 index, _ ->
@@ -921,6 +929,26 @@ class ChatRepositoryImpl(
         val conversation =
             _activeConversation.value
                 ?: startNewConversation()
+
+        // -----------------------------------------------------
+        // RETRY IMAGE GENERATION
+        // -----------------------------------------------------
+
+        if (
+            isImageGenerationRequest(
+                userMessage.content
+            )
+        ) {
+
+            return generateAiImage(
+                conversation = conversation,
+                prompt = userMessage.content
+            )
+        }
+
+        // -----------------------------------------------------
+        // RETRY IMAGE SEARCH
+        // -----------------------------------------------------
 
         val detector =
             searchIntentDetector as?
@@ -986,6 +1014,109 @@ class ChatRepositoryImpl(
     }
 
     // ---------------------------------------------------------
+    // AI IMAGE GENERATION
+    // ---------------------------------------------------------
+
+    private suspend fun generateAiImage(
+        conversation: Conversation,
+        prompt: String
+    ): Result<ChatMessage> {
+
+        _isGenerating.value = true
+        _searchPhase.value = SearchPhase.GENERATING
+
+        val assistantId =
+            UUID.randomUUID().toString()
+
+        try {
+
+            val cleanPrompt =
+                cleanImagePrompt(prompt)
+
+            val result =
+                imageGenerationService.generateImage(
+                    prompt = cleanPrompt,
+                    aspectRatio = detectAspectRatio(prompt),
+                    imageSize = detectImageSize(prompt)
+                )
+
+            if (result.isFailure) {
+
+                val error =
+                    result.exceptionOrNull()
+                        ?: IllegalStateException(
+                            "Image generation failed."
+                        )
+
+                return Result.failure(error)
+            }
+
+            val image =
+                result.getOrThrow()
+
+            if (image.base64Data.isBlank()) {
+                return Result.failure(
+                    IllegalStateException(
+                        "Gemini did not return an image."
+                    )
+                )
+            }
+
+            val finalMessage =
+                ChatMessage(
+                    id = assistantId,
+                    conversationId = conversation.id,
+                    role = MessageRole.ASSISTANT,
+                    content =
+                        image.text
+                            ?.trim()
+                            ?.takeIf {
+                                it.isNotBlank()
+                            }
+                            ?: "Here is the image I created for you.",
+                    timestamp =
+                        System.currentTimeMillis(),
+                    status =
+                        MessageStatus.SENT,
+                    generatedImageBase64 =
+                        image.base64Data,
+                    generatedImageMimeType =
+                        image.mimeType
+                )
+
+            inMemoryMessages.add(
+                finalMessage
+            )
+
+            _messages.value =
+                _messages.value + finalMessage
+
+            persistMessage(
+                finalMessage,
+                conversation
+            )
+
+            return Result.success(
+                finalMessage
+            )
+
+        } catch (e: CancellationException) {
+
+            throw e
+
+        } catch (e: Exception) {
+
+            return Result.failure(e)
+
+        } finally {
+
+            _isGenerating.value = false
+            _searchPhase.value = SearchPhase.IDLE
+            activeGenerationJob = null
+        }
+    }
+
+    // ---------------------------------------------------------
     // REAL AI STREAMING
     // ---------------------------------------------------------
 
@@ -1026,9 +1157,6 @@ class ChatRepositoryImpl(
         var failure:
             Throwable? = null
 
-        /*
-         * Add retrieved image source information.
-         */
         retrievedImages.forEach { image ->
 
             if (
@@ -1055,12 +1183,6 @@ class ChatRepositoryImpl(
 
         try {
 
-            /*
-             * Only useful conversation history.
-             *
-             * IMPORTANT:
-             * ERROR messages are NEVER sent back to Gemini.
-             */
             val history =
                 _messages.value
                     .filter {
@@ -1075,9 +1197,6 @@ class ChatRepositoryImpl(
                     }
                     .takeLast(20)
 
-            /*
-             * Memory context.
-             */
             val effectiveConfig =
                 if (_isMemoryEnabled.value) {
 
@@ -1116,9 +1235,6 @@ class ChatRepositoryImpl(
                     config
                 }
 
-            /*
-             * Image instructions.
-             */
             val imageInstructions =
                 if (
                     retrievedImages.isNotEmpty()
@@ -1178,9 +1294,6 @@ Do not pretend that an image was generated.
                     effectiveConfig
                 }
 
-            /*
-             * REAL Gemini streaming call.
-             */
             aiService
                 .generateStream(
                     conversationId =
@@ -1285,10 +1398,6 @@ Do not pretend that an image was generated.
                         var finalContent =
                             text.toString().trim()
 
-                        /*
-                         * Append retrieved images only
-                         * when Gemini did not already include them.
-                         */
                         if (
                             retrievedImages.isNotEmpty() &&
                             !finalContent.contains(
@@ -1325,10 +1434,6 @@ Do not pretend that an image was generated.
                                     ).trim()
                         }
 
-                        /*
-                         * Never save an empty assistant message
-                         * as a successful answer.
-                         */
                         if (finalContent.isBlank()) {
                             throw IllegalStateException(
                                 "Mayra AI returned an empty response."
@@ -1380,11 +1485,6 @@ Do not pretend that an image was generated.
 
         } catch (e: CancellationException) {
 
-            /*
-             * User cancelled generation.
-             *
-             * Do NOT save a fake successful answer.
-             */
             _messages.value =
                 _messages.value.filter {
                     it.id != assistantId
@@ -1396,15 +1496,6 @@ Do not pretend that an image was generated.
 
             failure = e
 
-            /*
-             * IMPORTANT:
-             *
-             * Do not save the partial AI response as an
-             * assistant ERROR message.
-             *
-             * This prevents failed/stale AI text from being
-             * sent to Gemini in the next request.
-             */
             _messages.value =
                 _messages.value.filter {
                     it.id != assistantId
@@ -1417,9 +1508,6 @@ Do not pretend that an image was generated.
             activeGenerationJob = null
         }
 
-        /*
-         * Return the real error to the UI.
-         */
         if (failure != null) {
 
             Result.failure(
@@ -1439,7 +1527,174 @@ Do not pretend that an image was generated.
     }
 
     // ---------------------------------------------------------
-    // HELPERS
+    // IMAGE REQUEST DETECTION
+    // ---------------------------------------------------------
+
+    private fun isImageGenerationRequest(
+        prompt: String
+    ): Boolean {
+
+        val p =
+            prompt
+                .lowercase(Locale.ROOT)
+                .trim()
+
+        val generationWords =
+            listOf(
+                "generate an image",
+                "generate a picture",
+                "generate image",
+                "generate picture",
+                "create an image",
+                "create a picture",
+                "create image",
+                "create picture",
+                "make an image",
+                "make a picture",
+                "make image",
+                "make picture",
+                "draw an image",
+                "draw a picture",
+                "draw image",
+                "draw picture",
+                "ai image",
+                "ai generated image",
+                "generate a photo",
+                "create a photo",
+                "make a photo",
+                "edit this image",
+                "edit this photo",
+                "modify this image",
+                "modify this photo",
+                "change this image",
+                "change this photo"
+            )
+
+        val bengaliWords =
+            listOf(
+                "ছবি তৈরি কর",
+                "ছবি বানাও",
+                "ছবি বানিয়ে দাও",
+                "ছবি তৈরি করে দাও",
+                "একটা ছবি বানাও",
+                "একটি ছবি বানাও",
+                "ছবি আঁকো",
+                "ছবি এডিট কর",
+                "ছবি এডিট করে দাও",
+                "ছবিটা এডিট কর",
+                "ফটো এডিট কর",
+                "ফটো বানাও",
+                "ছবি তৈরি"
+            )
+
+        val hindiWords =
+            listOf(
+                "छवि बनाओ",
+                "तस्वीर बनाओ",
+                "फोटो बनाओ",
+                "चित्र बनाओ",
+                "इमेज बनाओ",
+                "इमेज बनाकर दो",
+                "फोटो एडिट करो",
+                "तस्वीर एडिट करो",
+                "इमेज एडिट करो"
+            )
+
+        return generationWords.any {
+            p.contains(it)
+        } ||
+            bengaliWords.any {
+                prompt.contains(it)
+            } ||
+            hindiWords.any {
+                prompt.contains(it)
+            }
+    }
+
+    private fun cleanImagePrompt(
+        prompt: String
+    ): String {
+
+        val cleaned =
+            prompt
+                .trim()
+                .removePrefix("/")
+                .trim()
+
+        return """
+Create the requested image.
+
+User request:
+$cleaned
+
+Requirements:
+- Follow the user's visual description accurately.
+- Produce a polished high-quality image.
+- Do not add unnecessary text, logos, or watermarks unless requested.
+- Preserve requested people, objects, environment, composition, colors, lighting and style.
+""".trimIndent()
+    }
+
+    private fun detectAspectRatio(
+        prompt: String
+    ): String {
+
+        val p =
+            prompt.lowercase(Locale.ROOT)
+
+        return when {
+
+            p.contains("16:9") ||
+                p.contains("landscape") ||
+                p.contains("wide") ->
+                "16:9"
+
+            p.contains("9:16") ||
+                p.contains("portrait") ||
+                p.contains("vertical") ->
+                "9:16"
+
+            p.contains("4:3") ->
+                "4:3"
+
+            p.contains("3:4") ->
+                "3:4"
+
+            p.contains("3:2") ->
+                "3:2"
+
+            p.contains("2:3") ->
+                "2:3"
+
+            else ->
+                "1:1"
+        }
+    }
+
+    private fun detectImageSize(
+        prompt: String
+    ): String {
+
+        val p =
+            prompt.lowercase(Locale.ROOT)
+
+        return when {
+
+            p.contains("4k") ||
+                p.contains("4 k") ->
+                "4K"
+
+            p.contains("2k") ||
+                p.contains("2 k") ->
+                "2K"
+
+            else ->
+                "1K"
+        }
+    }
+
+    // ---------------------------------------------------------
+    // GENERAL IMAGE DETECTION
     // ---------------------------------------------------------
 
     private fun isImageRequest(
@@ -1470,6 +1725,10 @@ Do not pretend that an image was generated.
                 )
             )
     }
+
+    // ---------------------------------------------------------
+    // MEMORY
+    // ---------------------------------------------------------
 
     private fun buildMemoryContext(
         memories: List<MemoryItem>,
@@ -1552,6 +1811,10 @@ Do not pretend that an image was generated.
             .take(maxCount)
     }
 
+    // ---------------------------------------------------------
+    // PERSIST MESSAGE
+    // ---------------------------------------------------------
+
     private suspend fun persistMessage(
         message: ChatMessage,
         conversation: Conversation
@@ -1592,9 +1855,7 @@ Do not pretend that an image was generated.
             )
 
         } catch (_: Exception) {
-            /*
-             * Database failure must never stop AI streaming.
-             */
+            // Database failure must never stop AI.
         }
     }
 }
