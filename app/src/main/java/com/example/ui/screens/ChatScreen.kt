@@ -131,12 +131,11 @@ fun ChatScreen(
         val isNewMessageAdded = count > previousMessageCount
         previousMessageCount = count
 
-        if (isNewMessageAdded) {
-            // New message added: smoothly scroll to bottom
-            listState.animateScrollToItem(count - 1)
+        if (isNewMessageAdded || (state.isGenerating && state.messages.lastOrNull()?.role == com.example.domain.model.MessageRole.USER)) {
+            // New message sent: smoothly scroll to bottom where typing indicator is displayed
+            listState.animateScrollToItem(listState.layoutInfo.totalItemsCount.coerceAtLeast(1) - 1)
         } else if (state.isGenerating) {
             // During token streaming, only scroll if the user is already near the bottom
-            // Do not interrupt the user if they scrolled up to read older messages
             val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
             val total = listState.layoutInfo.totalItemsCount
             if (total > 0 && lastVisible >= total - 3) {
@@ -246,18 +245,19 @@ fun ChatScreen(
                                 )
                             }
 
-                            // Show thinking indicator ONLY before the first response chunk arrives
+                            // Show animated 'Mayra is thinking...' typing indicator ONLY before the first response chunk arrives
                             val isWaitingForFirstChunk = state.isGenerating && (
                                 state.messages.isEmpty() ||
                                 state.messages.last().role != com.example.domain.model.MessageRole.ASSISTANT ||
                                 state.messages.last().content.isEmpty()
                             )
                             if (isWaitingForFirstChunk) {
-                                item {
+                                item(key = "typing_indicator") {
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(horizontal = 14.dp, vertical = 6.dp),
+                                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                                            .testTag("chat_stream_typing_indicator_container"),
                                         contentAlignment = Alignment.CenterStart
                                     ) {
                                         ThinkingIndicator(searchPhase = state.searchPhase)
