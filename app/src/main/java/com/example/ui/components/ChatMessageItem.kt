@@ -3,6 +3,8 @@ package com.example.ui.components
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.BitmapFactory
+import android.util.Base64
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
@@ -21,20 +23,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Pause
+import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.VolumeUp
-import com.example.domain.model.VoiceState
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -51,33 +55,28 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDirection
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.Image
-import androidx.compose.material.icons.outlined.PictureAsPdf
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.style.TextOverflow
 import coil.compose.AsyncImage
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.material.icons.automirrored.outlined.OpenInNew
-import androidx.compose.material.icons.outlined.Public
-import androidx.compose.ui.platform.LocalUriHandler
-import com.example.domain.model.SearchSource
 import com.example.domain.model.AttachmentMetadata
 import com.example.domain.model.AttachmentType
 import com.example.domain.model.ChatMessage
 import com.example.domain.model.MessageRole
 import com.example.domain.model.MessageStatus
+import com.example.domain.model.SearchSource
+import com.example.domain.model.VoiceState
 import com.example.ui.theme.MayraCyan
 import com.example.ui.theme.MayraCyanBright
-import com.example.ui.theme.MayraDarkSurface
-import com.example.ui.theme.MayraDarkSurfaceBorder
 import com.example.ui.theme.MayraDarkSurfaceElevated
+import com.example.ui.theme.MayraDarkSurfaceBorder
 import com.example.ui.theme.MayraIndigo
 import com.example.ui.theme.MayraRose
 import com.example.ui.theme.MayraViolet
@@ -113,10 +112,12 @@ fun ChatMessageItem(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp, vertical = 6.dp),
-            horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
+            horizontalAlignment =
+                if (isUser) Alignment.End else Alignment.Start
         ) {
+
             if (isUser) {
-                // User Message Layout
+
                 Column(
                     horizontalAlignment = Alignment.End,
                     modifier = Modifier.widthIn(max = 320.dp)
@@ -140,26 +141,37 @@ fun ChatMessageItem(
                                 )
                             )
                             .border(
-                                width = 1.dp,
-                                color = MayraCyan.copy(alpha = 0.35f),
-                                shape = RoundedCornerShape(
+                                1.dp,
+                                MayraCyan.copy(alpha = 0.35f),
+                                RoundedCornerShape(
                                     topStart = 18.dp,
                                     topEnd = 18.dp,
                                     bottomStart = 18.dp,
                                     bottomEnd = 4.dp
                                 )
                             )
-                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                            .padding(
+                                horizontal = 14.dp,
+                                vertical = 10.dp
+                            )
                     ) {
                         Column {
-                            // Attachments display
+
                             if (message.attachments.isNotEmpty()) {
                                 Column(
-                                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                                    modifier = Modifier.padding(bottom = if (message.content.isNotBlank()) 8.dp else 0.dp)
+                                    verticalArrangement =
+                                        Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.padding(
+                                        bottom =
+                                            if (message.content.isNotBlank())
+                                                8.dp
+                                            else 0.dp
+                                    )
                                 ) {
-                                    for (att in message.attachments) {
-                                        UserAttachmentPreview(attachment = att)
+                                    message.attachments.forEach {
+                                        UserAttachmentPreview(
+                                            attachment = it
+                                        )
                                     }
                                 }
                             }
@@ -168,10 +180,12 @@ fun ChatMessageItem(
                                 Text(
                                     text = message.content,
                                     style = MaterialTheme.typography.bodyLarge.copy(
-                                        textDirection = TextDirection.ContentOrLtr,
+                                        textDirection =
+                                            TextDirection.ContentOrLtr,
                                         lineHeight = 22.sp
                                     ),
-                                    color = MaterialTheme.colorScheme.onSurface
+                                    color =
+                                        MaterialTheme.colorScheme.onSurface
                                 )
                             }
                         }
@@ -182,110 +196,158 @@ fun ChatMessageItem(
                     Text(
                         text = formatTime(message.timestamp),
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        color = MaterialTheme.colorScheme
+                            .onSurfaceVariant.copy(alpha = 0.7f),
                         modifier = Modifier.padding(end = 4.dp)
                     )
                 }
+
             } else {
-                // AI Assistant Message Layout
+
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(end = 12.dp)
                 ) {
+
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement =
+                            Arrangement.spacedBy(8.dp)
                     ) {
-                        // Mayra AI Miniature Badge
                         Box(
                             modifier = Modifier
                                 .size(26.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(
                                     Brush.linearGradient(
-                                        listOf(MayraCyanBright, MayraIndigo, MayraViolet)
+                                        listOf(
+                                            MayraCyanBright,
+                                            MayraIndigo,
+                                            MayraViolet
+                                        )
                                     )
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = "M",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Black,
-                                    color = Color.White
-                                )
+                                style =
+                                    MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Black,
+                                        color = Color.White
+                                    )
                             )
                         }
 
                         Text(
                             text = "Mayra AI",
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                fontWeight = FontWeight.SemiBold
-                            ),
+                            style =
+                                MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = FontWeight.SemiBold
+                                ),
                             color = MayraCyan
                         )
 
                         Text(
-                            text = "• ${formatTime(message.timestamp)}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text =
+                                "• ${formatTime(message.timestamp)}",
+                            style =
+                                MaterialTheme.typography.labelSmall,
+                            color =
+                                MaterialTheme.colorScheme
+                                    .onSurfaceVariant
                         )
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // AI Message Content or Error State
                     if (message.status == MessageStatus.ERROR) {
+
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(14.dp))
                                 .background(Color(0xFF241017))
-                                .border(1.dp, MayraRose.copy(alpha = 0.4f), RoundedCornerShape(14.dp))
+                                .border(
+                                    1.dp,
+                                    MayraRose.copy(alpha = 0.4f),
+                                    RoundedCornerShape(14.dp)
+                                )
                                 .padding(14.dp)
                         ) {
                             Column {
+
                                 Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    verticalAlignment =
+                                        Alignment.CenterVertically,
+                                    horizontalArrangement =
+                                        Arrangement.spacedBy(8.dp)
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Outlined.ErrorOutline,
-                                        contentDescription = "Error icon",
+                                        imageVector =
+                                            Icons.Outlined.ErrorOutline,
+                                        contentDescription = "Error",
                                         tint = MayraRose,
                                         modifier = Modifier.size(18.dp)
                                     )
+
                                     Text(
-                                        text = message.errorMessage ?: "Failed to generate response.",
-                                        style = MaterialTheme.typography.bodyMedium,
+                                        text =
+                                            message.errorMessage
+                                                ?: "Failed to generate response.",
+                                        style =
+                                            MaterialTheme.typography.bodyMedium,
                                         color = MayraRose
                                     )
                                 }
 
-                                Spacer(modifier = Modifier.height(8.dp))
+                                Spacer(
+                                    modifier = Modifier.height(8.dp)
+                                )
 
                                 FilledTonalButton(
                                     onClick = onRetry,
-                                    colors = ButtonDefaults.filledTonalButtonColors(
-                                        containerColor = MayraRose.copy(alpha = 0.2f),
-                                        contentColor = MayraRose
-                                    ),
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.testTag("retry_message_button")
+                                    colors =
+                                        ButtonDefaults
+                                            .filledTonalButtonColors(
+                                                containerColor =
+                                                    MayraRose.copy(
+                                                        alpha = 0.2f
+                                                    ),
+                                                contentColor = MayraRose
+                                            ),
+                                    shape =
+                                        RoundedCornerShape(8.dp),
+                                    modifier =
+                                        Modifier.testTag(
+                                            "retry_message_button"
+                                        )
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Outlined.Refresh,
+                                        imageVector =
+                                            Icons.Outlined.Refresh,
                                         contentDescription = null,
-                                        modifier = Modifier.size(14.dp)
+                                        modifier =
+                                            Modifier.size(14.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(text = "Retry", style = MaterialTheme.typography.labelSmall)
+
+                                    Spacer(
+                                        modifier = Modifier.width(4.dp)
+                                    )
+
+                                    Text(
+                                        text = "Retry",
+                                        style =
+                                            MaterialTheme.typography
+                                                .labelSmall
+                                    )
                                 }
                             }
                         }
+
                     } else {
-                        // AI Markdown Body
+
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -297,36 +359,90 @@ fun ChatMessageItem(
                                         bottomEnd = 16.dp
                                     )
                                 )
-                                .background(MayraDarkSurfaceElevated.copy(alpha = 0.65f))
-                                .border(1.dp, MayraDarkSurfaceBorder.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
-                                .padding(horizontal = 16.dp, vertical = 14.dp)
+                                .background(
+                                    MayraDarkSurfaceElevated
+                                        .copy(alpha = 0.65f)
+                                )
+                                .border(
+                                    1.dp,
+                                    MayraDarkSurfaceBorder
+                                        .copy(alpha = 0.6f),
+                                    RoundedCornerShape(16.dp)
+                                )
+                                .padding(
+                                    horizontal = 16.dp,
+                                    vertical = 14.dp
+                                )
                         ) {
-                            MarkdownContent(
-                                content = message.content,
-                                textColor = MaterialTheme.colorScheme.onSurface,
-                                onCodeCopied = onCopiedFeedback
-                            )
+
+                            /*
+                             * AI-generated image.
+                             */
+                            message.generatedImageBase64?.let { base64 ->
+
+                                GeneratedImagePreview(
+                                    base64Data = base64,
+                                    mimeType =
+                                        message.generatedImageMimeType
+                                            ?: "image/png"
+                                )
+
+                                if (message.content.isNotBlank()) {
+                                    Spacer(
+                                        modifier =
+                                            Modifier.height(12.dp)
+                                    )
+                                }
+                            }
+
+                            if (message.content.isNotBlank()) {
+                                MarkdownContent(
+                                    content = message.content,
+                                    textColor =
+                                        MaterialTheme.colorScheme
+                                            .onSurface,
+                                    onCodeCopied =
+                                        onCopiedFeedback
+                                )
+                            }
 
                             if (message.searchSources.isNotEmpty()) {
-                                AssistantSourcesSection(sources = message.searchSources)
+                                AssistantSourcesSection(
+                                    sources = message.searchSources
+                                )
                             }
                         }
 
-                        // AI Action Bar: Copy full message & TTS Listen controls
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(top = 4.dp, start = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                                .padding(
+                                    top = 4.dp,
+                                    start = 4.dp
+                                ),
+                            horizontalArrangement =
+                                Arrangement.spacedBy(6.dp),
+                            verticalAlignment =
+                                Alignment.CenterVertically
                         ) {
+
                             IconButton(
                                 onClick = {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    val clip = ClipData.newPlainText("Mayra AI response", message.content)
+                                    val clipboard =
+                                        context.getSystemService(
+                                            Context.CLIPBOARD_SERVICE
+                                        ) as ClipboardManager
+
+                                    val clip =
+                                        ClipData.newPlainText(
+                                            "Mayra AI response",
+                                            message.content
+                                        )
+
                                     clipboard.setPrimaryClip(clip)
                                     isMessageCopied = true
                                     onCopiedFeedback()
+
                                     coroutineScope.launch {
                                         delay(2000)
                                         isMessageCopied = false
@@ -334,61 +450,108 @@ fun ChatMessageItem(
                                 },
                                 modifier = Modifier
                                     .size(32.dp)
-                                    .testTag("copy_ai_message_button")
+                                    .testTag(
+                                        "copy_ai_message_button"
+                                    )
                             ) {
                                 Icon(
-                                    imageVector = if (isMessageCopied) Icons.Outlined.Check else Icons.Outlined.ContentCopy,
-                                    contentDescription = if (isMessageCopied) "Copied" else "Copy response",
-                                    tint = if (isMessageCopied) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    imageVector =
+                                        if (isMessageCopied)
+                                            Icons.Outlined.Check
+                                        else
+                                            Icons.Outlined.ContentCopy,
+                                    contentDescription =
+                                        if (isMessageCopied)
+                                            "Copied"
+                                        else
+                                            "Copy response",
+                                    tint =
+                                        if (isMessageCopied)
+                                            MaterialTheme.colorScheme
+                                                .tertiary
+                                        else
+                                            MaterialTheme.colorScheme
+                                                .onSurfaceVariant,
                                     modifier = Modifier.size(15.dp)
                                 )
                             }
 
-                            // Text-To-Speech Listen Controls
-                            if (message.status == MessageStatus.SENT && message.content.isNotBlank()) {
-                                val isThisMessageSpeaking = voiceState is VoiceState.Speaking && voiceState.messageId == message.id
-                                val isPaused = isThisMessageSpeaking && (voiceState as VoiceState.Speaking).isPaused
+                            if (
+                                message.status ==
+                                    MessageStatus.SENT &&
+                                message.content.isNotBlank()
+                            ) {
+
+                                val isThisMessageSpeaking =
+                                    voiceState is VoiceState.Speaking &&
+                                        voiceState.messageId ==
+                                            message.id
+
+                                val isPaused =
+                                    isThisMessageSpeaking &&
+                                        (voiceState as VoiceState.Speaking)
+                                            .isPaused
 
                                 if (isThisMessageSpeaking) {
+
                                     IconButton(
-                                        onClick = if (isPaused) onResumeSpeech else onPauseSpeech,
-                                        modifier = Modifier
-                                            .size(32.dp)
-                                            .testTag("tts_pause_resume_button")
+                                        onClick =
+                                            if (isPaused)
+                                                onResumeSpeech
+                                            else
+                                                onPauseSpeech,
+                                        modifier =
+                                            Modifier.size(32.dp)
                                     ) {
                                         Icon(
-                                            imageVector = if (isPaused) Icons.Outlined.PlayArrow else Icons.Outlined.Pause,
-                                            contentDescription = if (isPaused) "Resume listening" else "Pause speech",
+                                            imageVector =
+                                                if (isPaused)
+                                                    Icons.Outlined.PlayArrow
+                                                else
+                                                    Icons.Outlined.Pause,
+                                            contentDescription =
+                                                if (isPaused)
+                                                    "Resume"
+                                                else
+                                                    "Pause",
                                             tint = MayraCyan,
-                                            modifier = Modifier.size(16.dp)
+                                            modifier =
+                                                Modifier.size(16.dp)
                                         )
                                     }
 
                                     IconButton(
                                         onClick = onStopSpeech,
-                                        modifier = Modifier
-                                            .size(32.dp)
-                                            .testTag("tts_stop_button")
+                                        modifier =
+                                            Modifier.size(32.dp)
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Outlined.Stop,
-                                            contentDescription = "Stop speech",
+                                            imageVector =
+                                                Icons.Outlined.Stop,
+                                            contentDescription = "Stop",
                                             tint = MayraRose,
-                                            modifier = Modifier.size(16.dp)
+                                            modifier =
+                                                Modifier.size(16.dp)
                                         )
                                     }
+
                                 } else {
+
                                     IconButton(
                                         onClick = onSpeak,
-                                        modifier = Modifier
-                                            .size(32.dp)
-                                            .testTag("tts_listen_button")
+                                        modifier =
+                                            Modifier.size(32.dp)
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Outlined.VolumeUp,
-                                            contentDescription = "Listen to response",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(16.dp)
+                                            imageVector =
+                                                Icons.Outlined.VolumeUp,
+                                            contentDescription =
+                                                "Listen",
+                                            tint =
+                                                MaterialTheme.colorScheme
+                                                    .onSurfaceVariant,
+                                            modifier =
+                                                Modifier.size(16.dp)
                                         )
                                     }
                                 }
@@ -401,8 +564,80 @@ fun ChatMessageItem(
     }
 }
 
+@Composable
+private fun GeneratedImagePreview(
+    base64Data: String,
+    mimeType: String,
+    modifier: Modifier = Modifier
+) {
+    val bitmap = remember(base64Data) {
+        try {
+            val bytes =
+                Base64.decode(
+                    base64Data,
+                    Base64.DEFAULT
+                )
+
+            BitmapFactory.decodeByteArray(
+                bytes,
+                0,
+                bytes.size
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    if (bitmap != null) {
+
+        Column(
+            modifier = modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .border(
+                    1.dp,
+                    MayraCyan.copy(alpha = 0.35f),
+                    RoundedCornerShape(14.dp)
+                )
+        ) {
+            androidx.compose.foundation.Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "AI generated image",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 520.dp)
+                    .clip(RoundedCornerShape(14.dp))
+            )
+
+            Text(
+                text = "AI generated image",
+                style = MaterialTheme.typography.labelSmall,
+                color = MayraCyan.copy(alpha = 0.8f),
+                modifier = Modifier.padding(
+                    horizontal = 10.dp,
+                    vertical = 7.dp
+                )
+            )
+        }
+
+    } else {
+
+        Text(
+            text = "Unable to display generated image.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MayraRose
+        )
+    }
+}
+
 private fun formatTime(timestamp: Long): String {
-    val formatter = SimpleDateFormat("h:mm a", Locale.getDefault())
+    val formatter =
+        SimpleDateFormat(
+            "h:mm a",
+            Locale.getDefault()
+        )
+
     return formatter.format(Date(timestamp))
 }
 
@@ -412,129 +647,204 @@ private fun UserAttachmentPreview(
     modifier: Modifier = Modifier
 ) {
     when (attachment.type) {
+
         AttachmentType.IMAGE -> {
+
             if (!attachment.localUri.isNullOrBlank()) {
+
                 Box(
                     modifier = modifier
                         .clip(RoundedCornerShape(12.dp))
-                        .border(1.dp, MayraCyan.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                        .border(
+                            1.dp,
+                            MayraCyan.copy(alpha = 0.3f),
+                            RoundedCornerShape(12.dp)
+                        )
                 ) {
                     AsyncImage(
                         model = attachment.localUri,
-                        contentDescription = attachment.name,
-                        contentScale = ContentScale.Crop,
+                        contentDescription =
+                            attachment.name,
+                        contentScale =
+                            ContentScale.Crop,
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = 200.dp)
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(
+                                RoundedCornerShape(12.dp)
+                            )
                     )
                 }
+
             } else {
+
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment =
+                        Alignment.CenterVertically,
+                    horizontalArrangement =
+                        Arrangement.spacedBy(8.dp),
                     modifier = modifier
                         .clip(RoundedCornerShape(10.dp))
-                        .background(MayraDarkSurfaceElevated)
-                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                        .background(
+                            MayraDarkSurfaceElevated
+                        )
+                        .padding(
+                            horizontal = 10.dp,
+                            vertical = 6.dp
+                        )
                 ) {
                     Icon(
-                        imageVector = Icons.Outlined.Image,
+                        imageVector =
+                            Icons.Outlined.Image,
                         contentDescription = null,
                         tint = MayraCyan,
                         modifier = Modifier.size(18.dp)
                     )
+
                     Text(
                         text = attachment.name,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        style =
+                            MaterialTheme.typography.bodySmall,
+                        color =
+                            MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow =
+                            TextOverflow.Ellipsis
                     )
                 }
             }
         }
+
         AttachmentType.PDF -> {
+
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment =
+                    Alignment.CenterVertically,
+                horizontalArrangement =
+                    Arrangement.spacedBy(8.dp),
                 modifier = modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(10.dp))
                     .background(Color(0xFF26131D))
-                    .border(1.dp, MayraRose.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
-                    .padding(horizontal = 10.dp, vertical = 8.dp)
+                    .border(
+                        1.dp,
+                        MayraRose.copy(alpha = 0.35f),
+                        RoundedCornerShape(10.dp)
+                    )
+                    .padding(
+                        horizontal = 10.dp,
+                        vertical = 8.dp
+                    )
             ) {
                 Box(
                     modifier = Modifier
                         .size(32.dp)
                         .clip(RoundedCornerShape(6.dp))
-                        .background(MayraRose.copy(alpha = 0.2f)),
-                    contentAlignment = Alignment.Center
+                        .background(
+                            MayraRose.copy(alpha = 0.2f)
+                        ),
+                    contentAlignment =
+                        Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Outlined.PictureAsPdf,
+                        imageVector =
+                            Icons.Outlined.PictureAsPdf,
                         contentDescription = null,
                         tint = MayraRose,
-                        modifier = Modifier.size(18.dp)
+                        modifier =
+                            Modifier.size(18.dp)
                     )
                 }
-                Column(modifier = Modifier.weight(1f)) {
+
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
                     Text(
                         text = attachment.name,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        style =
+                            MaterialTheme.typography.labelMedium,
+                        color =
+                            MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow =
+                            TextOverflow.Ellipsis
                     )
+
                     if (attachment.formattedSize.isNotEmpty()) {
                         Text(
                             text = attachment.formattedSize,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MayraRose.copy(alpha = 0.8f)
+                            style =
+                                MaterialTheme.typography.labelSmall,
+                            color =
+                                MayraRose.copy(alpha = 0.8f)
                         )
                     }
                 }
             }
         }
+
         AttachmentType.DOCUMENT -> {
+
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment =
+                    Alignment.CenterVertically,
+                horizontalArrangement =
+                    Arrangement.spacedBy(8.dp),
                 modifier = modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(10.dp))
                     .background(Color(0xFF131E33))
-                    .border(1.dp, MayraCyan.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
-                    .padding(horizontal = 10.dp, vertical = 8.dp)
+                    .border(
+                        1.dp,
+                        MayraCyan.copy(alpha = 0.3f),
+                        RoundedCornerShape(10.dp)
+                    )
+                    .padding(
+                        horizontal = 10.dp,
+                        vertical = 8.dp
+                    )
             ) {
                 Box(
                     modifier = Modifier
                         .size(32.dp)
                         .clip(RoundedCornerShape(6.dp))
-                        .background(MayraCyan.copy(alpha = 0.2f)),
-                    contentAlignment = Alignment.Center
+                        .background(
+                            MayraCyan.copy(alpha = 0.2f)
+                        ),
+                    contentAlignment =
+                        Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Outlined.Description,
+                        imageVector =
+                            Icons.Outlined.Description,
                         contentDescription = null,
                         tint = MayraCyan,
-                        modifier = Modifier.size(18.dp)
+                        modifier =
+                            Modifier.size(18.dp)
                     )
                 }
-                Column(modifier = Modifier.weight(1f)) {
+
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
                     Text(
                         text = attachment.name,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        style =
+                            MaterialTheme.typography.labelMedium,
+                        color =
+                            MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow =
+                            TextOverflow.Ellipsis
                     )
+
                     if (attachment.formattedSize.isNotEmpty()) {
                         Text(
                             text = attachment.formattedSize,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MayraCyan.copy(alpha = 0.8f)
+                            style =
+                                MaterialTheme.typography.labelSmall,
+                            color =
+                                MayraCyan.copy(alpha = 0.8f)
                         )
                     }
                 }
@@ -556,38 +866,48 @@ private fun AssistantSourcesSection(
             .padding(top = 10.dp)
             .testTag("sources_section")
     ) {
+
         Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment =
+                Alignment.CenterVertically,
+            horizontalArrangement =
+                Arrangement.spacedBy(6.dp),
             modifier = Modifier.padding(bottom = 6.dp)
         ) {
             Icon(
-                imageVector = Icons.Outlined.Public,
+                imageVector =
+                    Icons.Outlined.Public,
                 contentDescription = null,
                 tint = MayraCyan,
                 modifier = Modifier.size(15.dp)
             )
+
             Text(
                 text = "Sources",
-                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                style =
+                    MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = FontWeight.SemiBold
+                    ),
                 color = MayraCyan
             )
         }
 
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        androidx.compose.foundation.lazy.LazyRow(
+            horizontalArrangement =
+                Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
             items(sources.size) { index ->
+
                 val source = sources[index]
+
                 SourceCitationChip(
                     source = source,
                     index = index,
                     onClick = {
                         try {
                             uriHandler.openUri(source.url)
-                        } catch (e: Exception) {
-                            // Ignored if invalid URI format
+                        } catch (_: Exception) {
                         }
                     }
                 )
@@ -603,27 +923,51 @@ private fun SourceCitationChip(
     onClick: () -> Unit
 ) {
     Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment =
+            Alignment.CenterVertically,
+        horizontalArrangement =
+            Arrangement.spacedBy(6.dp),
         modifier = Modifier
             .clip(RoundedCornerShape(10.dp))
             .background(Color(0xFF141A29))
-            .border(1.dp, Color(0xFF232D42), RoundedCornerShape(10.dp))
+            .border(
+                1.dp,
+                Color(0xFF232D42),
+                RoundedCornerShape(10.dp)
+            )
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 6.dp)
-            .testTag("source_citation_$index")
+            .padding(
+                horizontal = 10.dp,
+                vertical = 6.dp
+            )
+            .testTag(
+                "source_citation_$index"
+            )
     ) {
+
         Text(
-            text = source.domain.ifBlank { source.title },
-            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
-            color = MaterialTheme.colorScheme.onSurface,
+            text =
+                source.domain.ifBlank {
+                    source.title
+                },
+            style =
+                MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.Medium
+                ),
+            color =
+                MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.widthIn(max = 140.dp)
+            overflow =
+                TextOverflow.Ellipsis,
+            modifier =
+                Modifier.widthIn(max = 140.dp)
         )
+
         Icon(
-            imageVector = Icons.AutoMirrored.Outlined.OpenInNew,
-            contentDescription = "Open source",
+            imageVector =
+                Icons.AutoMirrored.Outlined.OpenInNew,
+            contentDescription =
+                "Open source",
             tint = MayraCyan,
             modifier = Modifier.size(12.dp)
         )
