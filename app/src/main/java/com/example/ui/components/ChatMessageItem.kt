@@ -65,6 +65,8 @@ import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import coil.compose.AsyncImage
 import com.example.domain.model.AttachmentMetadata
 import com.example.domain.model.AttachmentType
@@ -250,8 +252,7 @@ fun ChatMessageItem(
                         )
 
                         Text(
-                            text =
-                                "• ${formatTime(message.timestamp)}",
+                            text = "• ${formatTime(message.timestamp)}",
                             style =
                                 MaterialTheme.typography.labelSmall,
                             color =
@@ -375,9 +376,6 @@ fun ChatMessageItem(
                                 )
                         ) {
 
-                            /*
-                             * AI-generated image.
-                             */
                             message.generatedImageBase64?.let { base64 ->
 
                                 GeneratedImagePreview(
@@ -389,8 +387,7 @@ fun ChatMessageItem(
 
                                 if (message.content.isNotBlank()) {
                                     Spacer(
-                                        modifier =
-                                            Modifier.height(12.dp)
+                                        modifier = Modifier.height(12.dp)
                                     )
                                 }
                             }
@@ -399,8 +396,7 @@ fun ChatMessageItem(
                                 MarkdownContent(
                                     content = message.content,
                                     textColor =
-                                        MaterialTheme.colorScheme
-                                            .onSurface,
+                                        MaterialTheme.colorScheme.onSurface,
                                     onCodeCopied =
                                         onCopiedFeedback
                                 )
@@ -892,18 +888,16 @@ private fun AssistantSourcesSection(
             )
         }
 
-        androidx.compose.foundation.lazy.LazyRow(
+        LazyRow(
             horizontalArrangement =
                 Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            items(sources.size) { index ->
-
-                val source = sources[index]
+            items(sources) { source ->
 
                 SourceCitationChip(
                     source = source,
-                    index = index,
+                    index = sources.indexOf(source),
                     onClick = {
                         try {
                             uriHandler.openUri(source.url)
