@@ -23,8 +23,8 @@ interface ImageRetrievalService {
 
 class WikimediaImageRetrievalService(
     private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(5, TimeUnit.SECONDS)
         .build()
 ) : ImageRetrievalService {
 
@@ -33,14 +33,16 @@ class WikimediaImageRetrievalService(
             val trimmed = query.trim()
             if (trimmed.isBlank()) return@withContext emptyList()
 
-            // Try English / multilingual Wikipedia search first, fallback to Wikimedia Commons
-            val results = searchWikiSite("en.wikipedia.org", trimmed, maxResults)
-            if (results.isNotEmpty()) {
-                return@withContext results
-            }
+            kotlinx.coroutines.withTimeoutOrNull(4000L) {
+                // Try English / multilingual Wikipedia search first, fallback to Wikimedia Commons
+                val results = searchWikiSite("en.wikipedia.org", trimmed, maxResults)
+                if (results.isNotEmpty()) {
+                    return@withTimeoutOrNull results
+                }
 
-            // Try Commons
-            searchWikiSite("commons.wikimedia.org", trimmed, maxResults)
+                // Try Commons
+                searchWikiSite("commons.wikimedia.org", trimmed, maxResults)
+            } ?: emptyList()
         }
 
     private fun searchWikiSite(host: String, query: String, maxResults: Int): List<RetrievedImageResult> {

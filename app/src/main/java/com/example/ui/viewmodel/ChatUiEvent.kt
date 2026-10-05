@@ -44,6 +44,7 @@ sealed interface ChatUiEvent {
     data object AttachmentPlaceholderClicked : ChatUiEvent
     data object OpenAttachmentPicker : ChatUiEvent
     data object CloseAttachmentPicker : ChatUiEvent
+    data class SetAttachmentProcessing(val isProcessing: Boolean) : ChatUiEvent
     data class AttachmentsSelected(val attachments: List<com.example.domain.model.Attachment>) : ChatUiEvent
     data class RemovePendingAttachment(val attachmentId: String) : ChatUiEvent
     data class AttachmentError(val errorMessage: String) : ChatUiEvent

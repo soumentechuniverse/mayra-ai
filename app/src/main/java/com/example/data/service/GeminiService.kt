@@ -53,9 +53,9 @@ class GeminiService(
 
         private fun createDefaultClient(): OkHttpClient {
             return OkHttpClient.Builder()
-                .connectTimeout(60, TimeUnit.SECONDS)
-                .readTimeout(60, TimeUnit.SECONDS)
-                .writeTimeout(60, TimeUnit.SECONDS)
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(45, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
                 .retryOnConnectionFailure(true)
                 .build()
         }
@@ -289,10 +289,12 @@ class GeminiService(
     private fun resolveDefaultPrompt(attachments: List<com.example.domain.model.Attachment>): String {
         val allImages = attachments.isNotEmpty() && attachments.all { it.type == com.example.domain.model.AttachmentType.IMAGE }
         val allPdfs = attachments.isNotEmpty() && attachments.all { it.type == com.example.domain.model.AttachmentType.PDF }
+        val allDocs = attachments.isNotEmpty() && attachments.all { it.type == com.example.domain.model.AttachmentType.DOCUMENT }
         return when {
-            allImages -> "Analyze this image and describe what you can understand from it."
-            allPdfs -> "Analyze this document and describe what you can understand from it."
-            else -> "Analyze this document and explain the key information."
+            allImages -> if (attachments.size == 1) "Analyze this image and describe what you can understand from it." else "Analyze these images and describe the key details."
+            allPdfs -> if (attachments.size == 1) "Analyze this document and summarize its key information." else "Analyze these documents and summarize their key information."
+            allDocs -> if (attachments.size == 1) "Analyze this document and explain the key information." else "Analyze these documents and explain the key information."
+            else -> "Analyze the attached files and explain the key information."
         }
     }
 
@@ -381,13 +383,38 @@ class GeminiService(
         val currentParts = JSONArray()
 
         for (att in attachments) {
-            if (!att.base64Data.isNullOrBlank()) {
-                val inlineData = JSONObject()
-                inlineData.put("mimeType", att.mimeType)
-                inlineData.put("data", att.base64Data)
-                currentParts.put(JSONObject().put("inlineData", inlineData))
-            } else if (!att.textContent.isNullOrBlank()) {
-                currentParts.put(JSONObject().put("text", "[Document: ${att.name}]\n${att.textContent}"))
+            when (att.type) {
+                com.example.domain.model.AttachmentType.IMAGE -> {
+                    if (!att.base64Data.isNullOrBlank()) {
+                        val inlineData = JSONObject().apply {
+                            put("mimeType", att.mimeType)
+                            put("data", att.base64Data)
+                        }
+                        currentParts.put(JSONObject().put("inlineData", inlineData))
+                    }
+                }
+                com.example.domain.model.AttachmentType.PDF -> {
+                    if (!att.base64Data.isNullOrBlank()) {
+                        val inlineData = JSONObject().apply {
+                            put("mimeType", "application/pdf")
+                            put("data", att.base64Data)
+                        }
+                        currentParts.put(JSONObject().put("inlineData", inlineData))
+                    } else if (!att.textContent.isNullOrBlank()) {
+                        currentParts.put(JSONObject().put("text", "[Document: ${att.name}]\n${att.textContent}"))
+                    }
+                }
+                com.example.domain.model.AttachmentType.DOCUMENT -> {
+                    val content = att.textContent ?: if (!att.base64Data.isNullOrBlank()) {
+                        try {
+                            String(android.util.Base64.decode(att.base64Data, android.util.Base64.DEFAULT), Charsets.UTF_8)
+                        } catch (e: Exception) { null }
+                    } else null
+
+                    if (!content.isNullOrBlank()) {
+                        currentParts.put(JSONObject().put("text", "[Attached Document: ${att.name}]\n```\n$content\n```"))
+                    }
+                }
             }
         }
 

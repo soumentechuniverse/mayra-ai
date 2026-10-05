@@ -10,9 +10,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -88,12 +92,13 @@ fun MessageComposer(
     onStopGenerating: () -> Unit = {},
     pendingAttachments: List<Attachment> = emptyList(),
     onRemoveAttachment: (String) -> Unit = {},
+    isProcessingAttachments: Boolean = false,
     voiceState: VoiceState = VoiceState.Idle,
     onCancelVoice: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val hasText = text.isNotBlank()
-    val canSend = (hasText || pendingAttachments.isNotEmpty()) && !isGenerating
+    val canSend = (hasText || pendingAttachments.isNotEmpty()) && !isGenerating && !isProcessingAttachments
 
     val infiniteTransition = rememberInfiniteTransition(label = "mic_pulse")
     val pulseScale by infiniteTransition.animateFloat(
@@ -106,12 +111,20 @@ fun MessageComposer(
         label = "mic_scale"
     )
 
+    val imeInsets = androidx.compose.foundation.layout.WindowInsets.ime
+    val isImeOpen = imeInsets.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0
+    val navBarPadding = if (!isImeOpen) {
+        androidx.compose.foundation.layout.WindowInsets.navigationBars
+            .asPaddingValues()
+            .calculateBottomPadding()
+    } else 0.dp
+
     Column(
         modifier = modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.background)
             .padding(horizontal = 12.dp, vertical = 6.dp)
-            .navigationBarsPadding()
+            .padding(bottom = navBarPadding)
     ) {
         // Active Listening Banner (Speech-To-Text in progress)
         if (voiceState is VoiceState.Listening) {
@@ -183,19 +196,46 @@ fun MessageComposer(
         }
 
         // Pending Attachments Preview Tray
-        if (pendingAttachments.isNotEmpty()) {
+        if (pendingAttachments.isNotEmpty() || isProcessingAttachments) {
             LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 8.dp)
                     .testTag("pending_attachments_tray"),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 items(pendingAttachments, key = { it.id }) { att ->
                     PendingAttachmentChip(
                         attachment = att,
                         onRemove = { onRemoveAttachment(att.id) }
                     )
+                }
+
+                if (isProcessingAttachments) {
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MayraDarkSurfaceElevated)
+                                .border(1.dp, MayraCyan.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                                .padding(horizontal = 10.dp, vertical = 8.dp)
+                                .testTag("attachment_processing_indicator"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MayraCyan
+                            )
+                            Text(
+                                text = "Reading file…",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MayraCyan
+                            )
+                        }
+                    }
                 }
             }
         }

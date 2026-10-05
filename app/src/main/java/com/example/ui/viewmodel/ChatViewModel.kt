@@ -41,6 +41,7 @@ class ChatViewModel(
     private val _isHistoryOpen = MutableStateFlow(false)
     private val _isAttachmentPickerOpen = MutableStateFlow(false)
     private val _pendingAttachments = MutableStateFlow<List<com.example.domain.model.Attachment>>(emptyList())
+    private val _isProcessingAttachment = MutableStateFlow(false)
     private val _snackbarMessage = MutableStateFlow<String?>(null)
     private val _bannerError = MutableStateFlow<String?>(null)
 
@@ -177,27 +178,32 @@ class ChatViewModel(
         combine(
             _isAttachmentPickerOpen,
             _pendingAttachments,
+            _isProcessingAttachment,
             _snackbarMessage,
-            _bannerError,
-            _historySearchQuery
-        ) { attOpen, pendingAtts, snack, banner, query ->
-            CombinedDialogState(attOpen, pendingAtts, snack, banner, query)
+            _bannerError
+        ) { attOpen, pendingAtts, processing, snack, banner ->
+            Pair(Triple(attOpen, pendingAtts, processing), Pair(snack, banner))
         },
         combine(
+            _historySearchQuery,
             _showArchivedInHistory,
             _renameConversationDialogState,
             _deleteConversationDialogState,
-            _isManageMemoryOpen,
-            _clearMemoriesConfirmationOpen
-        ) { showArchived, renameConv, deleteConv, manageMem, clearMem ->
-            CombinedMemoryUiState(showArchived, renameConv, deleteConv, manageMem, clearMem)
+            _isManageMemoryOpen
+        ) { query, showArchived, renameConv, deleteConv, manageMem ->
+            CombinedMemoryUiState(showArchived, renameConv, deleteConv, manageMem, _clearMemoriesConfirmationOpen.value, query)
         }
-    ) { repo, gen, uiAndUpd, dialog, memUi ->
+    ) { repo, gen, uiAndUpd, dialogPair, memUi ->
         val uiCtrl = uiAndUpd.first
         val updateState = uiAndUpd.second
+        val attOpen = dialogPair.first.first
+        val pendingAtts = dialogPair.first.second
+        val isProcessingAtt = dialogPair.first.third
+        val snackbarMsg = dialogPair.second.first
+        val bannerErr = dialogPair.second.second
 
         // Compute filtered conversations for HistoryDrawer based on search query and archived tab
-        val query = dialog.historySearchQuery.trim()
+        val query = memUi.historySearchQuery.trim()
         val allConvs = repo.conversations
         val filtered = if (query.isEmpty()) {
             if (memUi.showArchived) {
@@ -217,14 +223,14 @@ class ChatViewModel(
             messages = repo.messages,
             allConversations = allConvs,
             filteredConversations = filtered,
-            historySearchQuery = dialog.historySearchQuery,
+            historySearchQuery = memUi.historySearchQuery,
             showArchivedInHistory = memUi.showArchived,
             renameConversationDialogState = memUi.renameConversation,
             deleteConversationDialogState = memUi.deleteConversation,
             memories = repo.memories,
             isMemoryEnabled = repo.isMemoryEnabled,
             isManageMemoryOpen = memUi.isManageMemoryOpen,
-            clearMemoriesConfirmationOpen = memUi.clearMemoriesConfirmationOpen,
+            clearMemoriesConfirmationOpen = _clearMemoriesConfirmationOpen.value,
             isGenerating = gen.isGenerating,
             searchPhase = gen.searchPhase,
             inputText = gen.inputText,
@@ -235,10 +241,11 @@ class ChatViewModel(
             isDarkTheme = uiCtrl.isDarkTheme,
             isSettingsOpen = uiCtrl.isSettingsOpen,
             isHistoryOpen = uiCtrl.isHistoryOpen,
-            isAttachmentPickerOpen = dialog.isAttachmentPickerOpen,
-            pendingAttachments = dialog.pendingAttachments,
-            snackbarMessage = dialog.snackbarMessage,
-            bannerError = dialog.bannerError,
+            isAttachmentPickerOpen = attOpen,
+            pendingAttachments = pendingAtts,
+            isProcessingAttachment = isProcessingAtt,
+            snackbarMessage = snackbarMsg,
+            bannerError = bannerErr,
             isCheckingUpdate = updateState.isChecking,
             updateInfo = updateState.info,
             updateStatusMessage = updateState.status,
@@ -459,9 +466,20 @@ class ChatViewModel(
                 _isAttachmentPickerOpen.value = false
             }
 
+            is ChatUiEvent.SetAttachmentProcessing -> {
+                _isProcessingAttachment.value = event.isProcessing
+            }
+
             is ChatUiEvent.AttachmentsSelected -> {
-                _pendingAttachments.value = _pendingAttachments.value + event.attachments
+                _isProcessingAttachment.value = false
                 _isAttachmentPickerOpen.value = false
+                val current = _pendingAttachments.value.toMutableList()
+                for (newAtt in event.attachments) {
+                    if (current.none { it.id == newAtt.id }) {
+                        current.add(newAtt)
+                    }
+                }
+                _pendingAttachments.value = current
             }
 
             is ChatUiEvent.RemovePendingAttachment -> {
@@ -469,6 +487,7 @@ class ChatViewModel(
             }
 
             is ChatUiEvent.AttachmentError -> {
+                _isProcessingAttachment.value = false
                 _bannerError.value = event.errorMessage
                 _isAttachmentPickerOpen.value = false
             }
@@ -682,6 +701,7 @@ class ChatViewModel(
         val renameConversation: Conversation?,
         val deleteConversation: Conversation?,
         val isManageMemoryOpen: Boolean,
-        val clearMemoriesConfirmationOpen: Boolean
+        val clearMemoriesConfirmationOpen: Boolean,
+        val historySearchQuery: String
     )
 }

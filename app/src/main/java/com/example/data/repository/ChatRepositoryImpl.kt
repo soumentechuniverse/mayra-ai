@@ -8,6 +8,7 @@ import com.example.data.local.entity.ConversationEntity
 import com.example.data.local.entity.MemoryItemEntity
 import com.example.data.service.DefaultSearchIntentDetector
 import com.example.domain.model.AiModelConfig
+import com.example.domain.model.Attachment
 import com.example.domain.model.ChatMessage
 import com.example.domain.model.Conversation
 import com.example.domain.model.MemoryCategory
@@ -28,6 +29,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.Locale
 import java.util.UUID
@@ -68,31 +70,38 @@ class ChatRepositoryImpl(
 
     // Fallback in-memory storage
     private val inMemoryMessages = mutableListOf<ChatMessage>()
+    private var lastSentAttachments = mutableListOf<Attachment>()
 
     init {
-        // Collect conversations from Room DAO
+        // Load initial conversations from Room DAO
         if (conversationDao != null) {
             scope.launch {
-                conversationDao.getAllConversations().collect { entities ->
+                try {
+                    val entities = conversationDao.getAllConversations().first()
                     val domainList = entities.map { it.toDomain() }
-                    if (domainList.isNotEmpty()) {
+                    if (domainList.isNotEmpty() && _conversations.value.isEmpty()) {
                         _conversations.value = domainList
                         if (_activeConversation.value == null) {
                             selectConversation(domainList.first().id)
                         }
                     }
+                } catch (e: Exception) {
+                    // Ignore cancellation or empty DB
                 }
             }
         }
 
-        // Collect memories from MemoryDao
+        // Load initial memories from MemoryDao
         if (memoryDao != null) {
             scope.launch {
-                memoryDao.getAllMemories().collect { entities ->
+                try {
+                    val entities = memoryDao.getAllMemories().first()
                     val domainList = entities.map { it.toDomain() }
-                    if (domainList.isNotEmpty() || _memories.value.isEmpty()) {
+                    if (domainList.isNotEmpty() && _memories.value.isEmpty()) {
                         _memories.value = domainList
                     }
+                } catch (e: Exception) {
+                    // Ignore cancellation or empty DB
                 }
             }
         }
@@ -116,6 +125,15 @@ class ChatRepositoryImpl(
         if (_activeConversation.value == null) {
             _activeConversation.value = initial
             _conversations.value = listOf(initial)
+            if (conversationDao != null) {
+                scope.launch {
+                    try {
+                        conversationDao.insertConversation(ConversationEntity.fromDomain(initial))
+                    } catch (e: Exception) {
+                        // Safe fallback
+                    }
+                }
+            }
         }
     }
 
@@ -363,6 +381,8 @@ class ChatRepositoryImpl(
         inMemoryMessages.add(userMessage)
         _messages.value = _messages.value + userMessage
         persistMessage(userMessage, conv)
+        lastSentAttachments.clear()
+        lastSentAttachments.addAll(attachments)
 
         val isImageQuery = (searchIntentDetector as? DefaultSearchIntentDetector)?.isImageSearch(trimmed) == true
         var retrievedImages: List<com.example.data.service.RetrievedImageResult> = emptyList()
@@ -415,7 +435,8 @@ class ChatRepositoryImpl(
             hasAttachments = userMsg.attachments.isNotEmpty()
         )
         val enableSearch = decision.needsSearch || (isImageQuery && retrievedImages.isEmpty())
-        return executeAiStreaming(conv, userMsg.content, config, emptyList(), enableSearch, retrievedImages)
+        val attachmentsToRetry: List<Attachment> = if (userMsg.attachments.isNotEmpty()) lastSentAttachments.toList() else emptyList()
+        return executeAiStreaming(conv, userMsg.content, config, attachmentsToRetry, enableSearch, retrievedImages)
     }
 
     private suspend fun executeAiStreaming(
@@ -665,15 +686,20 @@ class ChatRepositoryImpl(
         }.take(maxCount)
     }
 
-    private fun persistMessage(message: ChatMessage, conv: Conversation) {
+    private suspend fun persistMessage(message: ChatMessage, conv: Conversation) {
         if (conversationDao == null) return
-        scope.launch {
+        try {
+            if (conversationDao.getConversationById(conv.id) == null) {
+                conversationDao.insertConversation(ConversationEntity.fromDomain(conv))
+            }
             val previewText = if (message.content.length > 50) message.content.take(47) + "…" else message.content
             conversationDao.saveMessageAndUpdateConversation(
                 ChatMessageEntity.fromDomain(message),
                 updatedAt = System.currentTimeMillis(),
                 preview = previewText
             )
+        } catch (e: Exception) {
+            // Safe fallback: persistence failure should never crash or freeze chat streaming
         }
     }
 }

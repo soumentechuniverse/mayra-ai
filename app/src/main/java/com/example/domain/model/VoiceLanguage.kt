@@ -25,7 +25,10 @@ enum class VoiceLanguage(
 
     companion object {
         fun fromTag(tag: String?): VoiceLanguage {
-            return entries.find { it.tag.equals(tag, ignoreCase = true) } ?: AUTO
+            if (tag.isNullOrBlank()) return AUTO
+            return entries.find { it.tag.equals(tag, ignoreCase = true) }
+                ?: entries.find { it.tag.startsWith(tag.substringBefore('-'), ignoreCase = true) }
+                ?: AUTO
         }
     }
 }

@@ -54,61 +54,14 @@ import kotlinx.coroutines.launch
 fun AttachmentBottomSheet(
     isOpen: Boolean,
     onDismiss: () -> Unit,
-    onAttachmentsSelected: (List<Attachment>) -> Unit,
-    onAttachmentError: (String) -> Unit,
+    onPickImages: () -> Unit,
+    onPickPdf: () -> Unit,
+    onPickDocs: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     if (!isOpen) return
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-
-    fun processUris(uris: List<Uri>) {
-        if (uris.isEmpty()) return
-        scope.launch {
-            val successful = mutableListOf<Attachment>()
-            val errors = mutableListOf<String>()
-
-            for (uri in uris) {
-                val res = AttachmentHelper.processUri(context, uri)
-                if (res.isSuccess) {
-                    successful.add(res.getOrThrow())
-                } else {
-                    val err = res.exceptionOrNull()?.localizedMessage ?: "Failed to process file."
-                    errors.add(err)
-                }
-            }
-
-            if (successful.isNotEmpty()) {
-                onAttachmentsSelected(successful)
-            }
-            if (errors.isNotEmpty()) {
-                onAttachmentError(errors.first())
-            }
-        }
-    }
-
-    // 1. Photo Picker Launcher (zero-permission)
-    val photoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 4)
-    ) { uris ->
-        processUris(uris)
-    }
-
-    // 2. PDF Document Picker Launcher
-    val pdfPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenMultipleDocuments()
-    ) { uris ->
-        processUris(uris)
-    }
-
-    // 3. Document / Text File Picker Launcher
-    val docPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenMultipleDocuments()
-    ) { uris ->
-        processUris(uris)
-    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -142,12 +95,7 @@ fun AttachmentBottomSheet(
                 title = "Image from Gallery",
                 subtitle = "Photos, screenshots, diagrams (JPG, PNG, WEBP)",
                 testTag = "attach_image_option",
-                onClick = {
-                    onDismiss()
-                    photoPickerLauncher.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                    )
-                }
+                onClick = onPickImages
             )
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -159,10 +107,7 @@ fun AttachmentBottomSheet(
                 title = "PDF Document",
                 subtitle = "Summarize, extract points, or translate PDF",
                 testTag = "attach_pdf_option",
-                onClick = {
-                    onDismiss()
-                    pdfPickerLauncher.launch(arrayOf("application/pdf"))
-                }
+                onClick = onPickPdf
             )
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -174,18 +119,7 @@ fun AttachmentBottomSheet(
                 title = "Text & Document File",
                 subtitle = "TXT, Markdown, CSV, JSON, code files",
                 testTag = "attach_doc_option",
-                onClick = {
-                    onDismiss()
-                    docPickerLauncher.launch(
-                        arrayOf(
-                            "text/*",
-                            "application/json",
-                            "text/plain",
-                            "text/csv",
-                            "text/markdown"
-                        )
-                    )
-                }
+                onClick = onPickDocs
             )
         }
     }

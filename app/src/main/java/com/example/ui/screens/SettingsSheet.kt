@@ -769,7 +769,8 @@ fun SettingsSheet(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { onToggleUpdateSourceConfig() }
-                            .padding(vertical = 4.dp),
+                            .padding(vertical = 4.dp)
+                            .testTag("configure_update_source_button"),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -781,8 +782,7 @@ fun SettingsSheet(
                         Text(
                             text = if (isUpdateSourceConfigOpen) "Hide ▲" else "Configure ▼",
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                            color = MayraCyan,
-                            modifier = Modifier.testTag("configure_update_source_button")
+                            color = MayraCyan
                         )
                     }
 

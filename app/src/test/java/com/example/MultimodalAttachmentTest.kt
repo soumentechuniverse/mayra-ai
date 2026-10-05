@@ -218,4 +218,107 @@ class MultimodalAttachmentTest {
         val textPart = parts.getJSONObject(1).getString("text")
         assertTrue(textPart.contains("Analyze this document"))
     }
+
+    @Test
+    fun `geminiService sends text document attachment safely formatted`() = runBlocking {
+        var capturedRequestBody: String? = null
+
+        val mockClient = OkHttpClient.Builder()
+            .addInterceptor(Interceptor { chain ->
+                val request = chain.request()
+                val buffer = okio.Buffer()
+                request.body?.writeTo(buffer)
+                capturedRequestBody = buffer.readUtf8()
+
+                val sseData = """
+                    data: {"candidates": [{"content": {"parts": [{"text": "Found a syntax bug."}], "role": "model"}}]}
+
+                    data: [DONE]
+                """.trimIndent()
+
+                Response.Builder()
+                    .request(request)
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body(sseData.toResponseBody("text/event-stream".toMediaType()))
+                    .build()
+            })
+            .build()
+
+        val service = GeminiService(
+            apiKeyProvider = { "AIzaSyFakeKey123" },
+            okHttpClient = mockClient
+        )
+
+        val docAttachment = Attachment(
+            metadata = AttachmentMetadata(
+                name = "main.py",
+                mimeType = "text/plain",
+                sizeBytes = 120,
+                type = AttachmentType.DOCUMENT
+            ),
+            textContent = "def hello():\n    print('Hello World')\n"
+        )
+
+        val chunks = service.generateStream(
+            conversationId = "conv-1",
+            prompt = "Review this code",
+            history = emptyList(),
+            config = AiModelConfig(),
+            attachments = listOf(docAttachment)
+        ).toList()
+
+        assertEquals(2, chunks.size)
+        assertNotNull(capturedRequestBody)
+
+        val json = JSONObject(capturedRequestBody!!)
+        val contents = json.getJSONArray("contents")
+        val parts = contents.getJSONObject(0).getJSONArray("parts")
+        assertEquals(2, parts.length())
+
+        val docTextPart = parts.getJSONObject(0).getString("text")
+        assertTrue(docTextPart.contains("main.py"))
+        assertTrue(docTextPart.contains("def hello():"))
+
+        val promptPart = parts.getJSONObject(1).getString("text")
+        assertEquals("Review this code", promptPart)
+    }
+
+    @Test
+    fun `attachmentHelper resolves types correctly and rejects unsupported`() {
+        val jpgType = com.example.util.AttachmentHelper.resolveAttachmentType("image/jpeg", "jpg")
+        assertNotNull(jpgType)
+        assertEquals(AttachmentType.IMAGE, jpgType!!.first)
+        assertEquals("image/jpeg", jpgType.second)
+
+        val pngType = com.example.util.AttachmentHelper.resolveAttachmentType("image/png", "png")
+        assertNotNull(pngType)
+        assertEquals(AttachmentType.IMAGE, pngType!!.first)
+        assertEquals("image/png", pngType.second)
+
+        val webpType = com.example.util.AttachmentHelper.resolveAttachmentType("image/webp", "webp")
+        assertNotNull(webpType)
+        assertEquals(AttachmentType.IMAGE, webpType!!.first)
+        assertEquals("image/webp", webpType.second)
+
+        val pdfType = com.example.util.AttachmentHelper.resolveAttachmentType("application/pdf", "pdf")
+        assertNotNull(pdfType)
+        assertEquals(AttachmentType.PDF, pdfType!!.first)
+
+        val csvType = com.example.util.AttachmentHelper.resolveAttachmentType("text/csv", "csv")
+        assertNotNull(csvType)
+        assertEquals(AttachmentType.DOCUMENT, csvType!!.first)
+
+        val jsonType = com.example.util.AttachmentHelper.resolveAttachmentType("application/json", "json")
+        assertNotNull(jsonType)
+        assertEquals(AttachmentType.DOCUMENT, jsonType!!.first)
+
+        val pyType = com.example.util.AttachmentHelper.resolveAttachmentType("text/x-python", "py")
+        assertNotNull(pyType)
+        assertEquals(AttachmentType.DOCUMENT, pyType!!.first)
+
+        val unsupported = com.example.util.AttachmentHelper.resolveAttachmentType("application/x-msdownload", "exe")
+        org.junit.Assert.assertNull(unsupported)
+    }
 }

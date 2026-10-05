@@ -32,6 +32,7 @@ data class ChatUiState(
     val isHistoryOpen: Boolean = false,
     val isAttachmentPickerOpen: Boolean = false,
     val pendingAttachments: List<Attachment> = emptyList(),
+    val isProcessingAttachment: Boolean = false,
     val searchPhase: SearchPhase = SearchPhase.IDLE,
     val searchMode: SearchMode = SearchMode.AUTO,
     val voiceState: VoiceState = VoiceState.Idle,
