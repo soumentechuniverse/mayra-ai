@@ -3,6 +3,10 @@ package com.example.ui.components
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.Build
+import android.widget.Toast
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -10,6 +14,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -19,8 +24,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -32,8 +37,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -53,6 +64,14 @@ import com.example.ui.theme.MayraViolet
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+/**
+ * Developer-friendly Code Block component with:
+ * - Syntax highlighting (Kotlin, Python, Java, JS/TS, SQL, Bash)
+ * - Header bar with language chip
+ * - High-productivity 'Copy to Clipboard' button with 48dp touch target,
+ *   smooth icon & label animations, haptic feedback, and toast notification
+ * - Horizontal scrolling to preserve indentation and code readability
+ */
 @Composable
 fun CodeBlockView(
     code: String,
@@ -61,6 +80,7 @@ fun CodeBlockView(
     onCopied: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
     var isCopied by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
@@ -87,15 +107,15 @@ fun CodeBlockView(
                     color = MayraCodeBorder,
                     shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
                 )
-                .padding(horizontal = 14.dp, vertical = 6.dp),
+                .padding(horizontal = 12.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // Language badge with terminal dots
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Subtle colored dots
                 Box(
                     modifier = Modifier
                         .size(8.dp)
@@ -113,28 +133,75 @@ fun CodeBlockView(
                 )
             }
 
-            IconButton(
+            // Developer Copy Button: Min 48dp touch target with animated icon and label
+            Surface(
                 onClick = {
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                     val clip = ClipData.newPlainText("code", code)
-                    clipboard.setPrimaryClip(clip)
+                    clipboard?.setPrimaryClip(clip)
+                    try {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    } catch (_: Exception) {}
                     isCopied = true
                     onCopied?.invoke()
+
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                        Toast.makeText(context, "Code copied to clipboard", Toast.LENGTH_SHORT).show()
+                    }
+
                     coroutineScope.launch {
                         delay(2000)
                         isCopied = false
                     }
                 },
+                shape = RoundedCornerShape(8.dp),
+                color = if (isCopied) MayraEmerald.copy(alpha = 0.15f) else Color.Transparent,
+                border = BorderStroke(
+                    width = 1.dp,
+                    color = if (isCopied) MayraEmerald.copy(alpha = 0.55f) else MayraCodeBorder
+                ),
                 modifier = Modifier
-                    .size(32.dp)
+                    .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
                     .testTag("copy_code_button")
+                    .semantics {
+                        contentDescription = if (isCopied) "Code copied to clipboard" else "Copy code to clipboard"
+                        role = Role.Button
+                    }
             ) {
-                Icon(
-                    imageVector = if (isCopied) Icons.Outlined.Check else Icons.Outlined.ContentCopy,
-                    contentDescription = if (isCopied) "Code copied" else "Copy code",
-                    tint = if (isCopied) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(16.dp)
-                )
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    AnimatedContent(
+                        targetState = isCopied,
+                        label = "copy_icon_anim"
+                    ) { copied ->
+                        if (copied) {
+                            Icon(
+                                imageVector = Icons.Outlined.Check,
+                                contentDescription = null,
+                                tint = MayraEmerald,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Outlined.ContentCopy,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                    }
+                    Text(
+                        text = if (isCopied) "Copied!" else "Copy",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = if (isCopied) FontWeight.Bold else FontWeight.Medium,
+                            fontSize = 11.5.sp
+                        ),
+                        color = if (isCopied) MayraEmerald else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
 
