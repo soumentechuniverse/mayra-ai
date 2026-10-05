@@ -20,6 +20,8 @@ data class ChatUiState(
     val allConversations: List<Conversation> = emptyList(),
     val filteredConversations: List<Conversation> = emptyList(),
     val historySearchQuery: String = "",
+    val historyDateFilter: com.example.util.HistoryDateFilter = com.example.util.HistoryDateFilter.ALL,
+    val historyCustomDateEpoch: Long? = null,
     val showArchivedInHistory: Boolean = false,
     val renameConversationDialogState: Conversation? = null,
     val deleteConversationDialogState: Conversation? = null,

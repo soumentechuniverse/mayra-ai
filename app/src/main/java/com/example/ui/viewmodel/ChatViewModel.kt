@@ -50,6 +50,8 @@ class ChatViewModel(
 
     // Step 6: Advanced Conversation Management & Memory States
     private val _historySearchQuery = MutableStateFlow("")
+    private val _historyDateFilter = MutableStateFlow(com.example.util.HistoryDateFilter.ALL)
+    private val _historyCustomDateEpoch = MutableStateFlow<Long?>(null)
     private val _showArchivedInHistory = MutableStateFlow(false)
     private val _renameConversationDialogState = MutableStateFlow<Conversation?>(null)
     private val _deleteConversationDialogState = MutableStateFlow<Conversation?>(null)
@@ -186,12 +188,21 @@ class ChatViewModel(
         },
         combine(
             _historySearchQuery,
+            _historyDateFilter,
+            _historyCustomDateEpoch,
             _showArchivedInHistory,
-            _renameConversationDialogState,
-            _deleteConversationDialogState,
-            _isManageMemoryOpen
-        ) { query, showArchived, renameConv, deleteConv, manageMem ->
-            CombinedMemoryUiState(showArchived, renameConv, deleteConv, manageMem, _clearMemoriesConfirmationOpen.value, query)
+            _renameConversationDialogState
+        ) { query, dateFilter, customEpoch, showArchived, renameConv ->
+            CombinedMemoryUiState(
+                showArchived = showArchived,
+                renameConversation = renameConv,
+                deleteConversation = _deleteConversationDialogState.value,
+                isManageMemoryOpen = _isManageMemoryOpen.value,
+                clearMemoriesConfirmationOpen = _clearMemoriesConfirmationOpen.value,
+                historySearchQuery = query,
+                historyDateFilter = dateFilter,
+                historyCustomDateEpoch = customEpoch
+            )
         }
     ) { repo, gen, uiAndUpd, dialogPair, memUi ->
         val uiCtrl = uiAndUpd.first
@@ -202,20 +213,18 @@ class ChatViewModel(
         val snackbarMsg = dialogPair.second.first
         val bannerErr = dialogPair.second.second
 
-        // Compute filtered conversations for HistoryDrawer based on search query and archived tab
+        // Compute filtered conversations for HistoryDrawer based on search query, date filter, and archived tab
         val query = memUi.historySearchQuery.trim()
         val allConvs = repo.conversations
-        val filtered = if (query.isEmpty()) {
-            if (memUi.showArchived) {
-                allConvs.filter { it.isArchived }
-            } else {
-                allConvs.filter { !it.isArchived }
-            }
-        } else {
-            allConvs.filter { conv ->
-                conv.title.contains(query, ignoreCase = true) ||
-                    conv.preview.contains(query, ignoreCase = true)
-            }
+        val filtered = allConvs.filter { conv ->
+            val matchesArchived = if (memUi.showArchived) conv.isArchived else !conv.isArchived
+            val matchesDate = com.example.util.DateFilterHelper.matchesDate(
+                timestamp = conv.updatedAt,
+                filter = memUi.historyDateFilter,
+                customDateEpoch = memUi.historyCustomDateEpoch
+            )
+            val matchesQuery = com.example.util.DateFilterHelper.matchesQueryOrDate(conv, query)
+            matchesArchived && matchesDate && matchesQuery
         }
 
         ChatUiState(
@@ -224,6 +233,8 @@ class ChatViewModel(
             allConversations = allConvs,
             filteredConversations = filtered,
             historySearchQuery = memUi.historySearchQuery,
+            historyDateFilter = memUi.historyDateFilter,
+            historyCustomDateEpoch = memUi.historyCustomDateEpoch,
             showArchivedInHistory = memUi.showArchived,
             renameConversationDialogState = memUi.renameConversation,
             deleteConversationDialogState = memUi.deleteConversation,
@@ -384,6 +395,17 @@ class ChatViewModel(
                 _historySearchQuery.value = event.query
             }
 
+            is ChatUiEvent.HistoryDateFilterChanged -> {
+                _historyDateFilter.value = event.filter
+                _historyCustomDateEpoch.value = event.customDateEpoch
+            }
+
+            ChatUiEvent.ClearHistoryFilters -> {
+                _historySearchQuery.value = ""
+                _historyDateFilter.value = com.example.util.HistoryDateFilter.ALL
+                _historyCustomDateEpoch.value = null
+            }
+
             is ChatUiEvent.ToggleHistoryArchivedFilter -> {
                 _showArchivedInHistory.value = event.showArchived
             }
@@ -453,6 +475,8 @@ class ChatViewModel(
             ChatUiEvent.CloseHistory -> {
                 _isHistoryOpen.value = false
                 _historySearchQuery.value = ""
+                _historyDateFilter.value = com.example.util.HistoryDateFilter.ALL
+                _historyCustomDateEpoch.value = null
             }
 
             ChatUiEvent.ToggleTheme -> _isDarkTheme.value = !_isDarkTheme.value
@@ -702,6 +726,8 @@ class ChatViewModel(
         val deleteConversation: Conversation?,
         val isManageMemoryOpen: Boolean,
         val clearMemoriesConfirmationOpen: Boolean,
-        val historySearchQuery: String
+        val historySearchQuery: String,
+        val historyDateFilter: com.example.util.HistoryDateFilter = com.example.util.HistoryDateFilter.ALL,
+        val historyCustomDateEpoch: Long? = null
     )
 }

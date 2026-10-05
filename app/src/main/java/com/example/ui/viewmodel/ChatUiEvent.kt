@@ -21,6 +21,11 @@ sealed interface ChatUiEvent {
     data object DismissDeleteConversation : ChatUiEvent
     data class HistorySearchQueryChanged(val query: String) : ChatUiEvent
     data class ToggleHistoryArchivedFilter(val showArchived: Boolean) : ChatUiEvent
+    data class HistoryDateFilterChanged(
+        val filter: com.example.util.HistoryDateFilter,
+        val customDateEpoch: Long? = null
+    ) : ChatUiEvent
+    data object ClearHistoryFilters : ChatUiEvent
 
     // Memory Events
     data class ToggleMemoryEnabled(val enabled: Boolean) : ChatUiEvent
