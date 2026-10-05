@@ -1,15 +1,14 @@
-package com.example.data.service
+package com.aistudio.mayraai.data.service
 
-import com.example.BuildConfig
-import com.example.domain.model.AiModelConfig
-import com.example.domain.model.AiStreamChunk
-import com.example.domain.model.Attachment
-import com.example.domain.model.AttachmentType
-import com.example.domain.model.ChatMessage
-import com.example.domain.model.MessageRole
-import com.example.domain.model.MessageStatus
-import com.example.domain.model.SearchSource
-import com.example.domain.service.AiService
+import com.aistudio.mayraai.BuildConfig
+import com.aistudio.mayraai.domain.model.AiModelConfig
+import com.aistudio.mayraai.domain.model.AiStreamChunk
+import com.aistudio.mayraai.domain.model.Attachment
+import com.aistudio.mayraai.domain.model.AttachmentType
+import com.aistudio.mayraai.domain.model.ChatMessage
+import com.aistudio.mayraai.domain.model.MessageRole
+import com.aistudio.mayraai.domain.model.SearchSource
+import com.aistudio.mayraai.domain.service.AiService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -23,35 +22,13 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 import java.util.concurrent.TimeUnit
+import kotlin.math.min
 import kotlin.random.Random
 
-/**
- * Production-ready Gemini implementation for Mayra AI.
- *
- * Features:
- * - Real-time SSE streaming
- * - Multilingual responses
- * - Current date awareness
- * - Google Search grounding
- * - Image understanding
- * - PDF understanding
- * - Text/document attachments
- * - Conversation history
- * - 429 / 503 / 5xx retry handling
- * - Retry-After support
- * - Safe model fallback
- * - Request cancellation
- * - API key protection
- * - No artificial question limit
- */
 class GeminiService(
     private val apiKeyProvider: () -> String = {
         BuildConfig.GEMINI_API_KEY
@@ -60,53 +37,35 @@ class GeminiService(
 ) : AiService {
 
     companion object {
-
         private const val BASE_URL =
             "https://generativelanguage.googleapis.com/v1beta/models"
+
+        private const val PRIMARY_MODEL = "gemini-3.8-flash"
+
+        private const val PLACEHOLDER_KEY = "MY_GEMINI_API_KEY"
+
+        private const val MAX_RETRIES = 2
 
         private val JSON_MEDIA_TYPE =
             "application/json; charset=utf-8".toMediaType()
 
-        /*
-         * Keep retries limited.
-         *
-         * Attempt 1 = initial request
-         * Retry 1 = short delay
-         * Retry 2 = slightly longer delay
-         *
-         * This prevents very long waiting times.
-         */
-        private const val MAX_TRANSIENT_RETRIES = 2
-
-        private const val PLACEHOLDER_KEY = "MY_GEMINI_API_KEY"
-
         private fun createDefaultClient(): OkHttpClient {
             return OkHttpClient.Builder()
                 .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(60, TimeUnit.SECONDS)
+                .readTimeout(90, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
                 .retryOnConnectionFailure(true)
                 .build()
         }
     }
 
-    // ------------------------------------------------------------------------
-    // API AVAILABILITY
-    // ------------------------------------------------------------------------
-
     override suspend fun isAvailable(): Boolean {
-        val key = apiKeyProvider()
-            .trim()
-            .removeSurrounding("\"")
+        val key = cleanApiKey()
 
-        return key.isNotEmpty() &&
+        return key.isNotBlank() &&
                 key != PLACEHOLDER_KEY &&
                 key.length > 10
     }
-
-    // ------------------------------------------------------------------------
-    // NON-STREAMING RESPONSE
-    // ------------------------------------------------------------------------
 
     override suspend fun generateResponse(
         conversationId: String,
@@ -118,45 +77,44 @@ class GeminiService(
     ): Result<String> = withContext(Dispatchers.IO) {
 
         try {
-            val result = StringBuilder()
+            val output = StringBuilder()
 
             generateStream(
                 conversationId = conversationId,
                 prompt = prompt,
                 history = history,
-                config = config,
+                config = config.copy(
+                    modelId = PRIMARY_MODEL
+                ),
                 attachments = attachments,
                 enableSearch = enableSearch
             ).collect { chunk ->
 
-                if (!chunk.isComplete) {
-                    result.append(chunk.textDelta)
+                if (!chunk.isComplete &&
+                    chunk.textDelta.isNotEmpty()
+                ) {
+                    output.append(chunk.textDelta)
                 }
             }
 
-            val finalText = result.toString().trim()
+            val text = output.toString().trim()
 
-            if (finalText.isEmpty()) {
+            if (text.isBlank()) {
                 Result.failure(
                     IllegalStateException(
-                        "Gemini returned an empty response."
+                        "Mayra AI returned an empty response."
                     )
                 )
             } else {
-                Result.success(finalText)
+                Result.success(text)
             }
 
         } catch (e: CancellationException) {
             throw e
-
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
-
-    // ------------------------------------------------------------------------
-    // STREAMING RESPONSE
-    // ------------------------------------------------------------------------
 
     override fun generateStream(
         conversationId: String,
@@ -167,16 +125,9 @@ class GeminiService(
         enableSearch: Boolean
     ): Flow<AiStreamChunk> = flow {
 
-        val apiKey = apiKeyProvider()
-            .trim()
-            .removeSurrounding("\"")
+        val apiKey = cleanApiKey()
 
-        // ------------------------------------------------------------
-        // API KEY CHECK
-        // ------------------------------------------------------------
-
-        if (
-            apiKey.isEmpty() ||
+        if (apiKey.isBlank() ||
             apiKey == PLACEHOLDER_KEY ||
             apiKey.length <= 10
         ) {
@@ -185,916 +136,497 @@ class GeminiService(
             )
         }
 
-        // ------------------------------------------------------------
-        // PROMPT
-        // ------------------------------------------------------------
-
-        val trimmedPrompt = prompt.trim()
-
         val effectivePrompt =
-            if (
-                trimmedPrompt.isEmpty() &&
-                attachments.isNotEmpty()
-            ) {
-                resolveDefaultPrompt(attachments)
+            if (prompt.trim().isBlank() && attachments.isNotEmpty()) {
+                defaultAttachmentPrompt(attachments)
             } else {
-                trimmedPrompt
+                prompt.trim()
             }
 
-        if (effectivePrompt.isEmpty()) {
+        if (effectivePrompt.isBlank()) {
             throw IllegalArgumentException(
-                "Message content or attachment cannot be empty."
+                "Message content cannot be empty."
             )
         }
 
-        // ------------------------------------------------------------
-        // SEARCH STATUS
-        // ------------------------------------------------------------
-
         if (enableSearch) {
-
             emit(
                 AiStreamChunk(
-                    conversationId = conversationId,
                     textDelta = "",
+                    isComplete = false,
                     isSearching = true
                 )
             )
         }
 
-        // ------------------------------------------------------------
-        // MODEL CANDIDATES
-        // ------------------------------------------------------------
+        val payload = buildRequestJson(
+            prompt = effectivePrompt,
+            history = history,
+            config = config.copy(modelId = PRIMARY_MODEL),
+            attachments = attachments,
+            enableSearch = enableSearch
+        )
 
-        val candidateConfigs = buildList {
+        val endpoint =
+            "$BASE_URL/$PRIMARY_MODEL:streamGenerateContent?alt=sse"
 
-            add(config)
-
-            for (available in AiModelConfig.AvailableModels) {
-
-                if (
-                    available.modelId != config.modelId &&
-                    none {
-                        it.modelId == available.modelId
-                    }
-                ) {
-
-                    add(
-                        config.copy(
-                            modelId = available.modelId,
-                            displayName = available.displayName
-                        )
-                    )
-                }
-            }
-        }
-
-        var hasEmittedText = false
         var lastException: Exception? = null
 
-        // ------------------------------------------------------------
-        // TRY MODELS
-        // ------------------------------------------------------------
+        for (attempt in 0..MAX_RETRIES) {
 
-        for (currentConfig in candidateConfigs) {
+            currentCoroutineContext().ensureActive()
 
-            /*
-             * Once text has already reached the user,
-             * never restart with another model.
-             */
-            if (hasEmittedText) {
-                break
-            }
+            val request = Request.Builder()
+                .url(endpoint)
+                .post(
+                    payload.toString()
+                        .toRequestBody(JSON_MEDIA_TYPE)
+                )
+                .header("Accept", "text/event-stream")
+                .header("Cache-Control", "no-cache")
+                .header("x-goog-api-key", apiKey)
+                .build()
 
-            val isPrimary =
-                currentConfig.modelId == config.modelId
+            try {
 
-            /*
-             * Primary model gets limited retries.
-             * Fallback models get one retry.
-             */
-            val maxRetries =
-                if (isPrimary) {
-                    MAX_TRANSIENT_RETRIES
-                } else {
-                    1
-                }
+                okHttpClient.newCall(request).execute().use { response ->
 
-            var attempt = 0
+                    if (!response.isSuccessful) {
+                        throw parseHttpError(response)
+                    }
 
-            // --------------------------------------------------------
-            // BUILD REQUEST JSON
-            // --------------------------------------------------------
-
-            val requestPayload = buildRequestJson(
-                prompt = effectivePrompt,
-                history = history,
-                config = currentConfig,
-                attachments = attachments,
-                enableSearch = enableSearch
-            )
-
-            val endpoint =
-                "$BASE_URL/${currentConfig.modelId}" +
-                        ":streamGenerateContent" +
-                        "?alt=sse&key=$apiKey"
-
-            val request =
-                Request.Builder()
-                    .url(endpoint)
-                    .post(
-                        requestPayload
-                            .toString()
-                            .toRequestBody(JSON_MEDIA_TYPE)
-                    )
-                    .header(
-                        "Accept",
-                        "text/event-stream"
-                    )
-                    .header(
-                        "Cache-Control",
-                        "no-cache"
-                    )
-                    .build()
-
-            // --------------------------------------------------------
-            // RETRY LOOP
-            // --------------------------------------------------------
-
-            while (attempt <= maxRetries) {
-
-                currentCoroutineContext().ensureActive()
-
-                val call =
-                    okHttpClient.newCall(request)
-
-                try {
-
-                    call.execute().use { response ->
-
-                        // ------------------------------------------------
-                        // HTTP ERROR
-                        // ------------------------------------------------
-
-                        if (!response.isSuccessful) {
-                            handleHttpError(
-                                response = response,
-                                apiKey = apiKey,
-                                modelId = currentConfig.modelId
+                    val body =
+                        response.body
+                            ?: throw IOException(
+                                "Empty response from Gemini."
                             )
-                        }
 
-                        val body =
-                            response.body
-                                ?: throw IllegalStateException(
-                                    "Gemini returned an empty response body."
-                                )
+                    var emittedText = false
+                    var emittedComplete = false
 
-                        val accumulatedSources =
-                            mutableListOf<SearchSource>()
+                    val sources = mutableListOf<SearchSource>()
+                    val seenUrls = mutableSetOf<String>()
 
-                        val seenUrls =
-                            mutableSetOf<String>()
-
-                        val reader =
-                            body
-                                .byteStream()
-                                .bufferedReader(Charsets.UTF_8)
-
-                        // ------------------------------------------------
-                        // SSE STREAM
-                        // ------------------------------------------------
-
-                        reader.use {
+                    body.byteStream()
+                        .bufferedReader(Charsets.UTF_8)
+                        .use { reader ->
 
                             var line: String?
 
                             while (
-                                it.readLine()
-                                    .also { currentLine ->
-                                        line = currentLine
-                                    } != null
+                                reader.readLine()
+                                    .also { line = it } != null
                             ) {
 
-                                currentCoroutineContext()
-                                    .ensureActive()
+                                currentCoroutineContext().ensureActive()
 
-                                val rawLine =
+                                val raw =
                                     line?.trim()
                                         ?: continue
 
-                                if (!rawLine.startsWith("data:")) {
+                                if (!raw.startsWith("data:")) {
                                     continue
                                 }
 
-                                val jsonPayload =
-                                    rawLine
-                                        .removePrefix("data:")
+                                val jsonText =
+                                    raw.removePrefix("data:")
                                         .trim()
 
                                 if (
-                                    jsonPayload.isEmpty() ||
-                                    jsonPayload == "[DONE]"
+                                    jsonText.isBlank() ||
+                                    jsonText == "[DONE]"
                                 ) {
                                     continue
                                 }
 
-                                // ------------------------------------------------
-                                // SEARCH / GROUNDING
-                                // ------------------------------------------------
-
-                                val grounding =
-                                    parseGroundingMetadata(
-                                        jsonPayload
-                                    )
-
-                                if (grounding != null) {
-
-                                    val (
-                                        queries,
-                                        sources
-                                    ) = grounding
-
-                                    val newSources =
-                                        mutableListOf<SearchSource>()
-
-                                    for (source in sources) {
-
-                                        if (
-                                            seenUrls.add(
-                                                source.url
-                                            )
-                                        ) {
-
-                                            accumulatedSources.add(
-                                                source
-                                            )
-
-                                            newSources.add(
-                                                source
-                                            )
-                                        }
+                                val json =
+                                    try {
+                                        JSONObject(jsonText)
+                                    } catch (_: Exception) {
+                                        continue
                                     }
 
-                                    if (
-                                        queries.isNotEmpty() ||
-                                        newSources.isNotEmpty()
-                                    ) {
-
-                                        emit(
-                                            AiStreamChunk(
-                                                conversationId =
-                                                    conversationId,
-                                                textDelta = "",
-                                                searchQueries =
-                                                    queries,
-                                                searchSources =
-                                                    accumulatedSources
-                                                        .toList(),
-                                                isSearching = false
-                                            )
-                                        )
-                                    }
-                                }
-
-                                // ------------------------------------------------
-                                // TEXT DELTA
-                                // ------------------------------------------------
+                                parseGrounding(
+                                    json = json,
+                                    sources = sources,
+                                    seenUrls = seenUrls
+                                )
 
                                 val delta =
-                                    parseTextDelta(
-                                        jsonPayload
-                                    )
+                                    parseTextDelta(json)
 
                                 if (!delta.isNullOrEmpty()) {
 
-                                    hasEmittedText = true
+                                    emittedText = true
 
                                     emit(
                                         AiStreamChunk(
-                                            conversationId =
-                                                conversationId,
                                             textDelta = delta,
                                             isComplete = false,
-                                            searchSources =
-                                                accumulatedSources
-                                                    .toList()
+                                            isSearching = false,
+                                            sources = sources.toList()
                                         )
                                     )
                                 }
                             }
                         }
 
-                        // ------------------------------------------------
-                        // EMPTY RESPONSE
-                        // ------------------------------------------------
-
-                        if (!hasEmittedText) {
-
-                            throw IllegalStateException(
-                                "No text content received from Gemini."
-                            )
-                        }
-
-                        // ------------------------------------------------
-                        // COMPLETE
-                        // ------------------------------------------------
-
-                        emit(
-                            AiStreamChunk(
-                                conversationId =
-                                    conversationId,
-                                textDelta = "",
-                                isComplete = true,
-                                searchSources =
-                                    accumulatedSources.toList()
-                            )
+                    if (!emittedText) {
+                        throw IllegalStateException(
+                            "Gemini returned no text content."
                         )
+                    }
 
+                    emittedComplete = true
+
+                    emit(
+                        AiStreamChunk(
+                            textDelta = "",
+                            isComplete = true,
+                            isSearching = false,
+                            sources = sources.toList()
+                        )
+                    )
+
+                    if (emittedComplete) {
                         return@flow
                     }
-
-                } catch (e: CancellationException) {
-
-                    call.cancel()
-                    throw e
-
-                } catch (e: Exception) {
-
-                    call.cancel()
-
-                    lastException = e
-
-                    /*
-                     * Never retry after partial output.
-                     */
-                    if (hasEmittedText) {
-                        throw e
-                    }
-
-                    val transient =
-                        isTransientError(e)
-
-                    val modelUnavailable =
-                        isModelUnavailableError(e)
-
-                    // ----------------------------------------------------
-                    // RETRY
-                    // ----------------------------------------------------
-
-                    if (
-                        transient &&
-                        attempt < maxRetries
-                    ) {
-
-                        attempt++
-
-                        val retryAfter =
-                            (e as? GeminiApiException)
-                                ?.retryAfterSeconds
-
-                        val delayMs =
-                            calculateRetryDelay(
-                                attempt = attempt,
-                                retryAfterSeconds =
-                                    retryAfter
-                            )
-
-                        delay(delayMs)
-
-                    } else if (modelUnavailable) {
-
-                        /*
-                         * Try next available model.
-                         */
-                        break
-
-                    } else {
-
-                        /*
-                         * Permanent error.
-                         */
-                        throw e
-                    }
                 }
+
+            } catch (e: CancellationException) {
+                throw e
+
+            } catch (e: Exception) {
+
+                lastException = e
+
+                val apiError =
+                    e as? GeminiApiException
+
+                /*
+                 * 400 / 401 / 403 / 404:
+                 * Do NOT retry.
+                 */
+                if (
+                    apiError != null &&
+                    apiError.statusCode in
+                    listOf(400, 401, 403, 404)
+                ) {
+                    throw e
+                }
+
+                /*
+                 * 429 / 503 / temporary network error:
+                 * Retry only a small number of times.
+                 *
+                 * Never switch to a fake or unrelated model.
+                 */
+                val retryable =
+                    when {
+                        apiError?.statusCode == 429 -> true
+                        apiError?.statusCode == 503 -> true
+                        apiError?.statusCode in 500..599 -> true
+                        e is IOException -> true
+                        else -> false
+                    }
+
+                if (!retryable || attempt >= MAX_RETRIES) {
+                    throw e
+                }
+
+                val retryAfter =
+                    apiError?.retryAfterSeconds
+
+                val delayMs =
+                    if (retryAfter != null) {
+                        min(
+                            retryAfter * 1000L,
+                            8000L
+                        )
+                    } else {
+                        calculateRetryDelay(attempt)
+                    }
+
+                delay(delayMs)
             }
         }
-
-        // ------------------------------------------------------------
-        // EVERYTHING FAILED
-        // ------------------------------------------------------------
 
         throw (
             lastException
                 ?: IllegalStateException(
-                    "Mayra AI service is currently unavailable. Please try again."
+                    "Mayra AI is currently unavailable."
                 )
             )
 
     }.flowOn(Dispatchers.IO)
 
-    // ------------------------------------------------------------------------
-    // RETRY DELAY
-    // ------------------------------------------------------------------------
+    private fun cleanApiKey(): String {
+        return apiKeyProvider()
+            .trim()
+            .removeSurrounding("\"")
+            .removeSurrounding("'")
+    }
 
     private fun calculateRetryDelay(
-        attempt: Int,
-        retryAfterSeconds: Long?
+        attempt: Int
     ): Long {
-
-        if (
-            retryAfterSeconds != null &&
-            retryAfterSeconds in 1..60
-        ) {
-            return retryAfterSeconds * 1000L
-        }
 
         val base =
             when (attempt) {
-                1 -> 1200L
-                2 -> 2500L
+                0 -> 1000L
+                1 -> 2200L
                 else -> 4000L
             }
 
         val jitter =
             Random.nextLong(
-                from = 100L,
-                until = 400L
+                0L,
+                500L
             )
 
         return base + jitter
     }
 
-    // ------------------------------------------------------------------------
-    // DEFAULT ATTACHMENT PROMPT
-    // ------------------------------------------------------------------------
-
-    private fun resolveDefaultPrompt(
+    private fun defaultAttachmentPrompt(
         attachments: List<Attachment>
     ): String {
 
-        val allImages =
-            attachments.isNotEmpty() &&
-                    attachments.all {
-                        it.type == AttachmentType.IMAGE
-                    }
+        val hasImage =
+            attachments.any {
+                it.type == AttachmentType.IMAGE
+            }
 
-        val allPdfs =
-            attachments.isNotEmpty() &&
-                    attachments.all {
-                        it.type == AttachmentType.PDF
-                    }
-
-        val allDocuments =
-            attachments.isNotEmpty() &&
-                    attachments.all {
-                        it.type == AttachmentType.DOCUMENT
-                    }
+        val hasPdf =
+            attachments.any {
+                it.type == AttachmentType.PDF
+            }
 
         return when {
+            hasImage ->
+                "Analyze the attached image carefully and explain what you can understand from it."
 
-            allImages -> {
-                if (attachments.size == 1) {
-                    "Analyze this image and describe what you can understand from it."
-                } else {
-                    "Analyze these images and describe the key details."
-                }
-            }
+            hasPdf ->
+                "Analyze the attached PDF and summarize its important information clearly."
 
-            allPdfs -> {
-                if (attachments.size == 1) {
-                    "Analyze this PDF document and summarize its key information."
-                } else {
-                    "Analyze these PDF documents and summarize their key information."
-                }
-            }
-
-            allDocuments -> {
-                if (attachments.size == 1) {
-                    "Analyze this document and explain its key information."
-                } else {
-                    "Analyze these documents and explain their key information."
-                }
-            }
-
-            else -> {
-                "Analyze the attached files and explain the key information."
-            }
+            else ->
+                "Analyze the attached document and explain its important information clearly."
         }
     }
-
-    // ------------------------------------------------------------------------
-    // REQUEST JSON
-    // ------------------------------------------------------------------------
 
     private fun buildRequestJson(
         prompt: String,
         history: List<ChatMessage>,
         config: AiModelConfig,
-        attachments: List<Attachment> = emptyList(),
-        enableSearch: Boolean = false
+        attachments: List<Attachment>,
+        enableSearch: Boolean
     ): JSONObject {
 
-        val root =
-            JSONObject()
-
-        // ------------------------------------------------------------
-        // SYSTEM INSTRUCTION
-        // ------------------------------------------------------------
-
-        val systemInstruction =
-            JSONObject()
-
-        val systemParts =
-            JSONArray()
+        val root = JSONObject()
 
         /*
-         * Current device date is added dynamically.
-         *
-         * This prevents the model from relying on an old
-         * hard-coded date.
+         * System instruction
          */
-        val currentDate =
-            LocalDate.now()
-
-        val formattedDate =
-            currentDate.format(
-                DateTimeFormatter.ofPattern(
-                    "dd MMMM yyyy",
-                    Locale.ENGLISH
-                )
-            )
-
-        val enhancedSystemPrompt =
-            buildString {
-
-                append(config.systemPrompt)
-
-                append("\n\n")
-
-                append(
-                    "CURRENT DATE CONTEXT:\n"
-                )
-
-                append(
-                    "Today is $formattedDate according to the device date.\n"
-                )
-
-                append(
-                    "Never invent or guess today's date. "
-                )
-
-                append(
-                    "If the user asks for current/latest/today's information "
-                )
-
-                append(
-                    "and web search is available, verify it before answering.\n"
-                )
-
-                append(
-                    "If the user asks a normal non-time-sensitive question, "
-                )
-
-                append(
-                    "answer directly without unnecessary web searching."
-                )
-            }
-
-        systemParts.put(
-            JSONObject().put(
-                "text",
-                enhancedSystemPrompt
-            )
-        )
-
-        systemInstruction.put(
-            "parts",
-            systemParts
-        )
-
         root.put(
             "systemInstruction",
-            systemInstruction
+            JSONObject().apply {
+
+                put(
+                    "parts",
+                    JSONArray().put(
+                        JSONObject().put(
+                            "text",
+                            buildSystemInstruction(
+                                config.systemPrompt
+                            )
+                        )
+                    )
+                )
+            }
         )
 
-        // ------------------------------------------------------------
-        // GENERATION CONFIG
-        // ------------------------------------------------------------
-
-        val generationConfig =
-            JSONObject()
-
-        generationConfig.put(
-            "temperature",
-            config.temperature
-        )
-
-        generationConfig.put(
-            "maxOutputTokens",
-            config.maxTokens
-        )
-
+        /*
+         * Generation configuration.
+         *
+         * Keep normal answers relatively fast.
+         */
         root.put(
             "generationConfig",
-            generationConfig
-        )
+            JSONObject().apply {
 
-        // ------------------------------------------------------------
-        // GOOGLE SEARCH
-        // ------------------------------------------------------------
-
-        if (enableSearch) {
-
-            val tools =
-                JSONArray()
-
-            val googleSearch =
-                JSONObject().put(
-                    "google_search",
-                    JSONObject()
+                put(
+                    "temperature",
+                    config.temperature
                 )
 
-            tools.put(
-                googleSearch
-            )
+                put(
+                    "maxOutputTokens",
+                    config.maxTokens.coerceIn(
+                        512,
+                        8192
+                    )
+                )
+            }
+        )
+
+        /*
+         * Google Search grounding.
+         */
+        if (enableSearch) {
 
             root.put(
                 "tools",
-                tools
+                JSONArray().put(
+                    JSONObject().put(
+                        "google_search",
+                        JSONObject()
+                    )
+                )
             )
         }
 
-        // ------------------------------------------------------------
-        // CONTENTS
-        // ------------------------------------------------------------
+        val contents = JSONArray()
 
-        val contents =
-            JSONArray()
+        /*
+         * Keep only useful recent history.
+         *
+         * Sending the entire conversation every time makes
+         * long chats slower and more expensive.
+         */
+        val recentHistory =
+            history
+                .filter {
+                    it.role != MessageRole.SYSTEM
+                }
+                .takeLast(20)
 
-        // ------------------------------------------------------------
-        // HISTORY
-        // ------------------------------------------------------------
+        var hasUserTurn = false
 
-        val historyTurns =
-            mutableListOf<
-                Pair<String, List<JSONObject>>
-                >()
-
-        for (message in history) {
-
-            // Don't send failed messages back to Gemini.
-            if (
-                message.status ==
-                MessageStatus.ERROR
-            ) {
-                continue
-            }
-
-            val rawText =
-                message.content.trim()
-
-            if (
-                rawText.isEmpty() &&
-                message.attachments.isEmpty()
-            ) {
-                continue
-            }
+        for (message in recentHistory) {
 
             val role =
                 when (message.role) {
-
-                    MessageRole.USER ->
+                    MessageRole.USER -> {
+                        hasUserTurn = true
                         "user"
-
-                    MessageRole.ASSISTANT ->
-                        "model"
-
-                    MessageRole.SYSTEM ->
-                        continue
-                }
-
-            val displayText =
-                if (message.attachments.isNotEmpty()) {
-
-                    val names =
-                        message.attachments.joinToString(
-                            separator = ", "
-                        ) {
-                            it.name
-                        }
-
-                    if (rawText.isEmpty()) {
-                        "[Attached: $names]"
-                    } else {
-                        "[Attached: $names]\n$rawText"
                     }
 
-                } else {
-                    rawText
+                    MessageRole.ASSISTANT -> "model"
+
+                    else -> continue
                 }
 
-            val part =
-                JSONObject().put(
-                    "text",
-                    displayText
-                )
+            val text =
+                message.content
+                    .trim()
 
-            historyTurns.add(
-                Pair(
-                    role,
-                    listOf(part)
-                )
-            )
-        }
-
-        // ------------------------------------------------------------
-        // GEMINI HISTORY MUST START WITH USER
-        // ------------------------------------------------------------
-
-        while (
-            historyTurns.isNotEmpty() &&
-            historyTurns.first().first != "user"
-        ) {
-            historyTurns.removeAt(0)
-        }
-
-        // ------------------------------------------------------------
-        // ADD HISTORY
-        // ------------------------------------------------------------
-
-        for (
-            (role, parts) in historyTurns
-        ) {
-
-            val turn =
-                JSONObject()
-
-            turn.put(
-                "role",
-                role
-            )
-
-            val partsArray =
-                JSONArray()
-
-            for (part in parts) {
-                partsArray.put(part)
+            if (text.isBlank()) {
+                continue
             }
 
-            turn.put(
-                "parts",
-                partsArray
-            )
-
             contents.put(
-                turn
+                JSONObject().apply {
+
+                    put(
+                        "role",
+                        role
+                    )
+
+                    put(
+                        "parts",
+                        JSONArray().put(
+                            JSONObject().put(
+                                "text",
+                                text
+                            )
+                        )
+                    )
+                }
             )
         }
 
-        // ------------------------------------------------------------
-        // CURRENT USER TURN
-        // ------------------------------------------------------------
+        /*
+         * Gemini expects the conversation to begin
+         * with a user message.
+         */
+        while (
+            contents.length() > 0 &&
+            contents
+                .optJSONObject(0)
+                ?.optString("role")
+                != "user"
+        ) {
+            val first = contents.optJSONObject(0)
 
-        val currentTurn =
-            JSONObject()
+            if (
+                first != null &&
+                first.optString("role") == "model"
+            ) {
+                contents.remove(0)
+            } else {
+                break
+            }
+        }
 
-        currentTurn.put(
-            "role",
-            "user"
-        )
-
-        val currentParts =
-            JSONArray()
-
-        // ------------------------------------------------------------
-        // ATTACHMENTS
-        // ------------------------------------------------------------
+        /*
+         * Current user turn.
+         */
+        val currentParts = JSONArray()
 
         for (attachment in attachments) {
 
             when (attachment.type) {
 
-                // ----------------------------------------------------
-                // IMAGE
-                // ----------------------------------------------------
-
-                AttachmentType.IMAGE -> {
-
-                    if (
-                        !attachment.base64Data
-                            .isNullOrBlank()
-                    ) {
-
-                        val inlineData =
-                            JSONObject()
-
-                        inlineData.put(
-                            "mimeType",
-                            attachment.mimeType
-                        )
-
-                        inlineData.put(
-                            "data",
-                            attachment.base64Data
-                        )
-
-                        currentParts.put(
-                            JSONObject().put(
-                                "inlineData",
-                                inlineData
-                            )
-                        )
-                    }
-                }
-
-                // ----------------------------------------------------
-                // PDF
-                // ----------------------------------------------------
-
+                AttachmentType.IMAGE,
                 AttachmentType.PDF -> {
 
+                    val base64 =
+                        attachment.base64Data
+                            ?.trim()
+
+                    val mime =
+                        attachment.mimeType
+                            ?.trim()
+
                     if (
-                        !attachment.base64Data
-                            .isNullOrBlank()
-                    ) {
-
-                        val inlineData =
-                            JSONObject()
-
-                        inlineData.put(
-                            "mimeType",
-                            "application/pdf"
-                        )
-
-                        inlineData.put(
-                            "data",
-                            attachment.base64Data
-                        )
-
-                        currentParts.put(
-                            JSONObject().put(
-                                "inlineData",
-                                inlineData
-                            )
-                        )
-
-                    } else if (
-                        !attachment.textContent
-                            .isNullOrBlank()
+                        !base64.isNullOrBlank() &&
+                        !mime.isNullOrBlank()
                     ) {
 
                         currentParts.put(
-                            JSONObject().put(
-                                "text",
-                                "[Document: ${attachment.name}]\n" +
-                                        attachment.textContent
-                            )
+                            JSONObject().apply {
+
+                                put(
+                                    "inlineData",
+                                    JSONObject().apply {
+
+                                        put(
+                                            "mimeType",
+                                            mime
+                                        )
+
+                                        put(
+                                            "data",
+                                            base64
+                                        )
+                                    }
+                                )
+                            }
                         )
                     }
                 }
 
-                // ----------------------------------------------------
-                // DOCUMENT
-                // ----------------------------------------------------
+                else -> {
 
-                AttachmentType.DOCUMENT -> {
-
-                    val content =
+                    val text =
                         attachment.textContent
-                            ?: if (
-                                !attachment.base64Data
-                                    .isNullOrBlank()
-                            ) {
+                            ?.trim()
 
-                                try {
-
-                                    String(
-                                        android.util.Base64.decode(
-                                            attachment.base64Data,
-                                            android.util.Base64.DEFAULT
-                                        ),
-                                        Charsets.UTF_8
-                                    )
-
-                                } catch (
-                                    _: Exception
-                                ) {
-                                    null
-                                }
-
-                            } else {
-                                null
-                            }
-
-                    if (!content.isNullOrBlank()) {
+                    if (!text.isNullOrBlank()) {
 
                         currentParts.put(
                             JSONObject().put(
                                 "text",
-                                "[Attached Document: " +
-                                        "${attachment.name}]\n" +
-                                        content
+                                "\nAttached file: ${attachment.name}\n$text"
                             )
                         )
                     }
@@ -1102,42 +634,26 @@ class GeminiService(
             }
         }
 
-        // ------------------------------------------------------------
-        // CURRENT PROMPT
-        // ------------------------------------------------------------
-
-        val trimmedPrompt =
-            prompt.trim()
-
-        val textToInclude =
-            when {
-
-                trimmedPrompt.isNotEmpty() ->
-                    trimmedPrompt
-
-                attachments.isNotEmpty() ->
-                    resolveDefaultPrompt(
-                        attachments
-                    )
-
-                else ->
-                    "Hello"
-            }
-
         currentParts.put(
             JSONObject().put(
                 "text",
-                textToInclude
+                prompt
             )
         )
 
-        currentTurn.put(
-            "parts",
-            currentParts
-        )
-
         contents.put(
-            currentTurn
+            JSONObject().apply {
+
+                put(
+                    "role",
+                    "user"
+                )
+
+                put(
+                    "parts",
+                    currentParts
+                )
+            }
         )
 
         root.put(
@@ -1148,140 +664,107 @@ class GeminiService(
         return root
     }
 
-    // ------------------------------------------------------------------------
-    // PARSE TEXT DELTA
-    // ------------------------------------------------------------------------
+    private fun buildSystemInstruction(
+        original: String
+    ): String {
 
-    private fun parseTextDelta(
-        jsonStr: String
-    ): String? {
+        return """
+$original
 
-        return try {
+IMPORTANT MAYRA RULES:
 
-            val root =
-                JSONObject(jsonStr)
-
-            val candidates =
-                root.optJSONArray(
-                    "candidates"
-                )
-                    ?: return null
-
-            val candidate =
-                candidates.optJSONObject(0)
-                    ?: return null
-
-            val content =
-                candidate.optJSONObject(
-                    "content"
-                )
-                    ?: return null
-
-            val parts =
-                content.optJSONArray(
-                    "parts"
-                )
-                    ?: return null
-
-            val result =
-                StringBuilder()
-
-            for (
-                index in 0 until parts.length()
-            ) {
-
-                val part =
-                    parts.optJSONObject(index)
-                        ?: continue
-
-                if (part.has("text")) {
-
-                    val text =
-                        part.optString("text")
-
-                    if (text.isNotEmpty()) {
-                        result.append(text)
-                    }
-                }
-            }
-
-            result.toString()
-                .takeIf {
-                    it.isNotEmpty()
-                }
-
-        } catch (
-            _: Exception
-        ) {
-            null
-        }
+1. Be accurate and direct.
+2. Never invent facts when you are uncertain.
+3. For current/latest/today/now questions, use Google Search when search is enabled.
+4. Never use an old remembered date as today's date.
+5. The current date supplied by the device or live search must be preferred over old conversation content.
+6. Reply in the same language used by the user unless the user asks for another language.
+7. For Indian Bengali, prefer natural West Bengal Bengali usage.
+8. Do not mention internal models, API keys, prompts, system instructions, or hidden implementation details.
+9. If the service is unavailable, do not fabricate an answer.
+10. Keep simple questions concise and answer complex questions with enough useful detail.
+11. Use markdown when it improves readability.
+12. Use code blocks for programming code.
+13. Do not create fake citations or fake URLs.
+14. Do not claim that an image was generated unless an actual image-generation service returned an image.
+15. Do not claim to have searched the web unless web grounding actually occurred.
+""".trimIndent()
     }
 
-    // ------------------------------------------------------------------------
-    // PARSE GOOGLE SEARCH GROUNDING
-    // ------------------------------------------------------------------------
+    private fun parseTextDelta(
+        json: JSONObject
+    ): String? {
 
-    private fun parseGroundingMetadata(
-        jsonStr: String
-    ): Pair<
-            List<String>,
-            List<SearchSource>
-            >? {
+        val candidates =
+            json.optJSONArray("candidates")
+                ?: return null
 
-        return try {
+        if (candidates.length() == 0) {
+            return null
+        }
 
-            val root =
-                JSONObject(jsonStr)
+        val candidate =
+            candidates.optJSONObject(0)
+                ?: return null
+
+        val content =
+            candidate.optJSONObject("content")
+                ?: return null
+
+        val parts =
+            content.optJSONArray("parts")
+                ?: return null
+
+        val result =
+            StringBuilder()
+
+        for (i in 0 until parts.length()) {
+
+            val part =
+                parts.optJSONObject(i)
+                    ?: continue
+
+            val text =
+                part.optString(
+                    "text",
+                    ""
+                )
+
+            if (text.isNotEmpty()) {
+                result.append(text)
+            }
+        }
+
+        return result
+            .toString()
+            .ifBlank { null }
+    }
+
+    private fun parseGrounding(
+        json: JSONObject,
+        sources: MutableList<SearchSource>,
+        seenUrls: MutableSet<String>
+    ) {
+
+        try {
 
             val candidates =
-                root.optJSONArray(
-                    "candidates"
-                )
-                    ?: return null
+                json.optJSONArray("candidates")
+                    ?: return
+
+            if (candidates.length() == 0) {
+                return
+            }
 
             val candidate =
                 candidates.optJSONObject(0)
-                    ?: return null
+                    ?: return
 
             val metadata =
                 candidate.optJSONObject(
                     "groundingMetadata"
                 )
-                    ?: return null
-
-            // ------------------------------------------------------------
-            // SEARCH QUERIES
-            // ------------------------------------------------------------
-
-            val queries =
-                mutableListOf<String>()
-
-            val queryArray =
-                metadata.optJSONArray(
-                    "webSearchQueries"
-                )
-
-            if (queryArray != null) {
-
-                for (
-                    i in 0 until queryArray.length()
-                ) {
-
-                    val query =
-                        queryArray.optString(i)
-
-                    if (query.isNotBlank()) {
-                        queries.add(query)
-                    }
-                }
-            }
-
-            // ------------------------------------------------------------
-            // SOURCES
-            // ------------------------------------------------------------
-
-            val sources =
-                mutableListOf<SearchSource>()
+                    ?: return
 
             val chunks =
                 metadata.optJSONArray(
@@ -1290,9 +773,7 @@ class GeminiService(
 
             if (chunks != null) {
 
-                for (
-                    i in 0 until chunks.length()
-                ) {
+                for (i in 0 until chunks.length()) {
 
                     val chunk =
                         chunks.optJSONObject(i)
@@ -1303,24 +784,25 @@ class GeminiService(
                             ?: continue
 
                     val uri =
-                        web.optString("uri")
+                        web.optString(
+                            "uri",
+                            ""
+                        )
 
                     val title =
-                        web.optString("title")
+                        web.optString(
+                            "title",
+                            uri
+                        )
 
-                    if (uri.isNotBlank()) {
+                    if (
+                        uri.isNotBlank() &&
+                        seenUrls.add(uri)
+                    ) {
 
                         sources.add(
                             SearchSource(
-                                title =
-                                    if (
-                                        title.isNotBlank()
-                                    ) {
-                                        title
-                                    } else {
-                                        SearchSource
-                                            .extractDomain(uri)
-                                    },
+                                title = title,
                                 url = uri
                             )
                         )
@@ -1328,201 +810,64 @@ class GeminiService(
                 }
             }
 
-            Pair(
-                queries,
-                sources
-            )
-
-        } catch (
-            _: Exception
-        ) {
-            null
+        } catch (_: Exception) {
+            // Grounding metadata must never break the answer.
         }
     }
 
-    // ------------------------------------------------------------------------
-    // HTTP ERROR HANDLER
-    // ------------------------------------------------------------------------
+    private fun parseHttpError(
+        response: okhttp3.Response
+    ): GeminiApiException {
 
-    private fun handleHttpError(
-        response: Response,
-        apiKey: String,
-        modelId: String
-    ): Nothing {
-
-        val code =
+        val status =
             response.code
 
-        val rawBody =
+        val retryAfter =
+            response.header(
+                "Retry-After"
+            )?.toLongOrNull()
+
+        val raw =
             try {
-                response.body?.string()
-            } catch (
-                _: Exception
-            ) {
+                response.body
+                    ?.string()
+                    ?.take(1000)
+            } catch (_: Exception) {
                 null
             }
 
-        val retryAfter =
-            response
-                .header("Retry-After")
-                ?.toLongOrNull()
-
-        val apiMessage =
-            extractErrorFromResponse(
-                rawBody
-            )?.replace(
-                apiKey,
-                "[REDACTED]"
-            )
-
-        val userMessage =
-            when (code) {
-
-                // ----------------------------------------------------
-                // BAD REQUEST
-                // ----------------------------------------------------
+        val message =
+            when (status) {
 
                 400 ->
-                    "Request error (400): " +
-                            (
-                                    apiMessage
-                                        ?: "Invalid request or model configuration."
-                                    )
-
-                // ----------------------------------------------------
-                // AUTH
-                // ----------------------------------------------------
+                    "Mayra AI could not process this request."
 
                 401, 403 ->
-                    "Gemini authentication failed. " +
-                            "Please check the API key configuration."
-
-                // ----------------------------------------------------
-                // MODEL NOT FOUND
-                // ----------------------------------------------------
+                    "Mayra AI API authentication failed."
 
                 404 ->
-                    "The Gemini model '$modelId' is unavailable."
-
-                // ----------------------------------------------------
-                // RATE LIMIT
-                // ----------------------------------------------------
+                    "Mayra AI model is unavailable."
 
                 429 ->
                     "Mayra AI is temporarily busy. Please try again shortly."
 
-                // ----------------------------------------------------
-                // SERVICE UNAVAILABLE
-                // ----------------------------------------------------
-
                 503 ->
                     "Mayra AI is temporarily unavailable. Please try again shortly."
 
-                // ----------------------------------------------------
-                // OTHER SERVER ERRORS
-                // ----------------------------------------------------
-
                 in 500..599 ->
-                    "Mayra AI service is temporarily busy. Please try again shortly."
-
-                // ----------------------------------------------------
-                // OTHER
-                // ----------------------------------------------------
+                    "Mayra AI server is temporarily unavailable. Please try again shortly."
 
                 else ->
-                    "Gemini service error ($code). " +
-                            (
-                                    apiMessage
-                                        ?: "Please try again."
-                                    )
+                    "Mayra AI request failed (HTTP $status)."
             }
 
-        throw GeminiApiException(
-            statusCode = code,
-            message = userMessage,
+        return GeminiApiException(
+            statusCode = status,
+            message = message,
             retryAfterSeconds = retryAfter
         )
     }
-
-    // ------------------------------------------------------------------------
-    // EXTRACT API ERROR
-    // ------------------------------------------------------------------------
-
-    private fun extractErrorFromResponse(
-        rawBody: String?
-    ): String? {
-
-        if (rawBody.isNullOrBlank()) {
-            return null
-        }
-
-        return try {
-
-            val root =
-                JSONObject(rawBody)
-
-            root
-                .optJSONObject("error")
-                ?.optString("message")
-                ?.takeIf {
-                    it.isNotBlank()
-                }
-
-        } catch (
-            _: Exception
-        ) {
-            null
-        }
-    }
-
-    // ------------------------------------------------------------------------
-    // TRANSIENT ERROR
-    // ------------------------------------------------------------------------
-
-    private fun isTransientError(
-        throwable: Throwable
-    ): Boolean {
-
-        if (throwable is IOException) {
-            return true
-        }
-
-        if (throwable is GeminiApiException) {
-
-            return throwable.statusCode == 429 ||
-                    throwable.statusCode == 503 ||
-                    throwable.statusCode in 500..599
-        }
-
-        return false
-    }
-
-    // ------------------------------------------------------------------------
-    // MODEL UNAVAILABLE
-    // ------------------------------------------------------------------------
-
-    private fun isModelUnavailableError(
-        throwable: Throwable
-    ): Boolean {
-
-        if (throwable is GeminiApiException) {
-
-            return throwable.statusCode == 404 ||
-                    throwable.statusCode == 503 ||
-                    throwable.statusCode in 500..599
-        }
-
-        if (throwable is IOException) {
-            return true
-        }
-
-        return false
-    }
 }
-
-// ============================================================================
-// GEMINI API EXCEPTION
-// ============================================================================
 
 class GeminiApiException(
     val statusCode: Int,
