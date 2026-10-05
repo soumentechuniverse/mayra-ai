@@ -23,5 +23,10 @@ data class ChatMessage(
     val status: MessageStatus = MessageStatus.SENT,
     val errorMessage: String? = null,
     val attachments: List<AttachmentMetadata> = emptyList(),
-    val searchSources: List<SearchSource> = emptyList()
+    val searchSources: List<SearchSource> = emptyList(),
+
+    // AI-generated image data.
+    // Base64 contains the generated image bytes.
+    val generatedImageBase64: String? = null,
+    val generatedImageMimeType: String? = null
 )
