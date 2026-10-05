@@ -22,118 +22,220 @@ data class AppUpdateInfo(
 
 class AppUpdateService(
     private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
         .build()
 ) {
 
-    suspend fun checkForUpdate(sourceUrl: String): Result<AppUpdateInfo> = withContext(Dispatchers.IO) {
+    companion object {
+        const val GITHUB_LATEST_RELEASE_API =
+            "https://api.github.com/repos/soumentechuniverse/mayra-ai/releases/latest"
+    }
+
+    suspend fun checkForUpdate(
+        sourceUrl: String = GITHUB_LATEST_RELEASE_API
+    ): Result<AppUpdateInfo> = withContext(Dispatchers.IO) {
+
+        val currentVersion = BuildConfig.VERSION_NAME
+            .ifBlank { "1.0.0" }
+            .removePrefix("v")
+            .removePrefix("V")
+            .trim()
+
         try {
-            val currentVersion = BuildConfig.VERSION_NAME.ifBlank { "1.0" }
             val request = Request.Builder()
-                .url(sourceUrl)
-                .header("Accept", "application/vnd.github.v3+json, application/json")
-                .header("User-Agent", "MayraAI-Android-UpdateChecker")
+                .url(
+                    sourceUrl.ifBlank {
+                        GITHUB_LATEST_RELEASE_API
+                    }
+                )
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "MayraAI-Android")
                 .build()
 
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    return@withContext Result.failure(
-                        IllegalStateException("Unable to fetch update details (HTTP ${response.code}).")
+
+                // No GitHub Release has been published yet.
+                // This is not an app error.
+                if (response.code == 404) {
+                    return@withContext Result.success(
+                        AppUpdateInfo(
+                            currentVersion = currentVersion,
+                            latestVersion = currentVersion,
+                            isUpdateAvailable = false,
+                            releaseNotes = "No public update has been published yet.",
+                            downloadUrl = "",
+                            releaseDate = null
+                        )
                     )
                 }
 
-                val bodyString = response.body?.string()
-                    ?: return@withContext Result.failure(IllegalStateException("Empty update response from server."))
-
-                val json = JSONObject(bodyString)
-
-                // Supports both standard GitHub Release API schema and simple JSON release schema
-                val tagName = when {
-                    json.has("tag_name") -> json.getString("tag_name")
-                    json.has("version") -> json.getString("version")
-                    json.has("name") -> json.getString("name")
-                    else -> "1.0"
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        IllegalStateException(
+                            "Update check failed (HTTP ${response.code})."
+                        )
+                    )
                 }
 
-                val cleanRemoteVersion = tagName.trim().removePrefix("v").removePrefix("V")
-                val cleanCurrentVersion = currentVersion.trim().removePrefix("v").removePrefix("V")
+                val body = response.body?.string()
 
-                val releaseNotes = when {
-                    json.has("body") && json.getString("body").isNotBlank() -> json.getString("body")
-                    json.has("notes") && json.getString("notes").isNotBlank() -> json.getString("notes")
-                    else -> "New features, performance enhancements, and bug fixes."
+                if (body.isNullOrBlank()) {
+                    return@withContext Result.failure(
+                        IllegalStateException("Empty update information.")
+                    )
                 }
 
-                // Locate APK asset or fallback to html release URL
-                var downloadUrl = ""
-                if (json.has("assets")) {
-                    val assets = json.getJSONArray("assets")
+                val json = JSONObject(body)
+
+                val remoteTag = json.optString(
+                    "tag_name",
+                    json.optString("version", "")
+                )
+
+                val latestVersion = cleanVersion(remoteTag)
+
+                if (latestVersion.isBlank()) {
+                    return@withContext Result.failure(
+                        IllegalStateException("Invalid release version.")
+                    )
+                }
+
+                val releaseNotes = json.optString(
+                    "body",
+                    "New features, performance improvements, and bug fixes."
+                ).ifBlank {
+                    "New features, performance improvements, and bug fixes."
+                }
+
+                // Find the APK from the GitHub Release assets.
+                var apkUrl = ""
+
+                val assets = json.optJSONArray("assets")
+
+                if (assets != null) {
                     for (i in 0 until assets.length()) {
-                        val asset = assets.getJSONObject(i)
-                        val name = asset.optString("name", "")
-                        if (name.endsWith(".apk", ignoreCase = true)) {
-                            downloadUrl = asset.optString("browser_download_url", "")
-                            break
+                        val asset = assets.optJSONObject(i) ?: continue
+
+                        val fileName = asset.optString("name", "")
+
+                        if (fileName.endsWith(".apk", ignoreCase = true)) {
+                            apkUrl = asset.optString(
+                                "browser_download_url",
+                                ""
+                            )
+
+                            if (apkUrl.isNotBlank()) {
+                                break
+                            }
                         }
                     }
                 }
 
-                if (downloadUrl.isBlank()) {
-                    downloadUrl = when {
-                        json.has("download_url") -> json.getString("download_url")
-                        json.has("downloadUrl") -> json.getString("downloadUrl")
-                        json.has("html_url") -> json.getString("html_url")
-                        else -> sourceUrl
-                    }
+                // If no APK asset exists, use the release page.
+                if (apkUrl.isBlank()) {
+                    apkUrl = json.optString("html_url", "")
                 }
 
-                val publishedAt = json.optString("published_at", json.optString("date", null))
+                val publishedAt = json.optString(
+                    "published_at",
+                    ""
+                ).ifBlank {
+                    null
+                }
 
-                val isNewer = isVersionNewer(cleanRemoteVersion, cleanCurrentVersion)
+                val isNewer = isVersionNewer(
+                    latestVersion,
+                    currentVersion
+                )
 
                 Result.success(
                     AppUpdateInfo(
                         currentVersion = currentVersion,
-                        latestVersion = cleanRemoteVersion,
+                        latestVersion = latestVersion,
                         isUpdateAvailable = isNewer,
                         releaseNotes = releaseNotes,
-                        downloadUrl = downloadUrl,
+                        downloadUrl = apkUrl,
                         releaseDate = publishedAt
                     )
                 )
             }
+
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(
+                IllegalStateException(
+                    "Unable to check for updates.",
+                    e
+                )
+            )
         }
     }
 
     /**
-     * Safely initiates user-directed download/installation via standard system Intent.
-     * Never performs silent installation.
+     * Opens the official GitHub APK/release page.
+     * Installation is always user-controlled by Android.
      */
-    fun openDownloadUrl(context: Context, downloadUrl: String) {
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(downloadUrl)).apply {
+    fun openDownloadUrl(
+        context: Context,
+        downloadUrl: String
+    ) {
+        if (downloadUrl.isBlank()) return
+
+        val intent = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse(downloadUrl)
+        ).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
+
         context.startActivity(intent)
     }
 
-    private fun isVersionNewer(remote: String, current: String): Boolean {
-        try {
-            val remoteParts = remote.split(".").mapNotNull { it.filter { char -> char.isDigit() }.toIntOrNull() }
-            val currentParts = current.split(".").mapNotNull { it.filter { char -> char.isDigit() }.toIntOrNull() }
+    private fun cleanVersion(version: String): String {
+        return version
+            .trim()
+            .removePrefix("v")
+            .removePrefix("V")
+            .substringBefore("-")
+            .substringBefore("+")
+            .trim()
+    }
 
-            val maxLen = maxOf(remoteParts.size, currentParts.size)
-            for (i in 0 until maxLen) {
-                val r = remoteParts.getOrElse(i) { 0 }
-                val c = currentParts.getOrElse(i) { 0 }
-                if (r > c) return true
-                if (r < c) return false
+    private fun isVersionNewer(
+        remote: String,
+        current: String
+    ): Boolean {
+
+        val remoteParts = versionParts(remote)
+        val currentParts = versionParts(current)
+
+        val maxSize = maxOf(
+            remoteParts.size,
+            currentParts.size
+        )
+
+        for (i in 0 until maxSize) {
+            val remotePart = remoteParts.getOrElse(i) { 0 }
+            val currentPart = currentParts.getOrElse(i) { 0 }
+
+            when {
+                remotePart > currentPart -> return true
+                remotePart < currentPart -> return false
             }
-            return false
-        } catch (e: Exception) {
-            return remote != current && remote > current
         }
+
+        return false
+    }
+
+    private fun versionParts(version: String): List<Int> {
+        return Regex("""\d+""")
+            .findAll(version)
+            .mapNotNull {
+                it.value.toIntOrNull()
+            }
+            .toList()
+            .ifEmpty {
+                listOf(0, 0, 0)
+            }
     }
 }
