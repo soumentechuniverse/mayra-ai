@@ -11,6 +11,11 @@ enum class SearchMode {
             ENABLED -> "Always Search"
             DISABLED -> "Off"
         }
+
+    companion object {
+        val OFF: SearchMode get() = DISABLED
+        val ALWAYS: SearchMode get() = ENABLED
+    }
 }
 
 enum class SearchPhase {

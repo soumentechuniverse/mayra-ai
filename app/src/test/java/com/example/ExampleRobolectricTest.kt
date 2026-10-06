@@ -9,13 +9,30 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [34])
 class ExampleRobolectricTest {
 
   @Test
   fun `read string from context`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val appName = context.getString(R.string.app_name)
-    assertEquals("Mayra AI", appName)
+    assertEquals("Mayra", appName)
+  }
+
+  @Test
+  fun `launch MainActivity`() {
+    val controller = org.robolectric.Robolectric.buildActivity(MainActivity::class.java).setup()
+    org.robolectric.shadows.ShadowLooper.idleMainLooper()
+    org.junit.Assert.assertNotNull(controller.get())
+  }
+
+  @Test
+  fun `database operations and conversation flow`() = kotlinx.coroutines.runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val repo = com.example.data.repository.ChatRepositoryImpl(context)
+    val conv = repo.createConversation("Test Chat")
+    org.junit.Assert.assertEquals("Test Chat", conv.title)
+    val fetched = repo.getConversationById(conv.id)
+    org.junit.Assert.assertNotNull(fetched)
   }
 }

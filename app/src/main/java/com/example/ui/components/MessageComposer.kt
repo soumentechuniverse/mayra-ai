@@ -469,6 +469,22 @@ private fun PendingAttachmentChip(
                         )
                     }
                 }
+                else -> {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MayraIndigo.copy(alpha = 0.2f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Description,
+                            contentDescription = null,
+                            tint = MayraCyanBright,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
             }
 
             Column(modifier = Modifier.widthIn(max = 140.dp)) {

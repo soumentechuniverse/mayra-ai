@@ -65,10 +65,11 @@ Core Instructions:
     override fun searchConversations(query: String): Flow<List<ConversationEntity>> =
         conversationDao.searchConversations(query)
 
-    override suspend fun getConversationById(id: String): ConversationEntity? =
+    override suspend fun getConversationById(id: String): ConversationEntity? = withContext(Dispatchers.IO) {
         conversationDao.getConversationById(id)
+    }
 
-    override suspend fun createConversation(title: String): ConversationEntity {
+    override suspend fun createConversation(title: String): ConversationEntity = withContext(Dispatchers.IO) {
         val conv = ConversationEntity(
             id = UUID.randomUUID().toString(),
             title = title.ifBlank { "New Conversation" },
@@ -76,25 +77,25 @@ Core Instructions:
             updatedAt = System.currentTimeMillis()
         )
         conversationDao.insertOrUpdate(conv)
-        return conv
+        conv
     }
 
-    override suspend fun updateConversationTitle(id: String, newTitle: String) {
-        val existing = conversationDao.getConversationById(id) ?: return
+    override suspend fun updateConversationTitle(id: String, newTitle: String) = withContext(Dispatchers.IO) {
+        val existing = conversationDao.getConversationById(id) ?: return@withContext
         conversationDao.update(existing.copy(title = newTitle, updatedAt = System.currentTimeMillis()))
     }
 
-    override suspend fun togglePinConversation(id: String, isPinned: Boolean) {
-        val existing = conversationDao.getConversationById(id) ?: return
+    override suspend fun togglePinConversation(id: String, isPinned: Boolean) = withContext(Dispatchers.IO) {
+        val existing = conversationDao.getConversationById(id) ?: return@withContext
         conversationDao.update(existing.copy(isPinned = isPinned, updatedAt = System.currentTimeMillis()))
     }
 
-    override suspend fun toggleArchiveConversation(id: String, isArchived: Boolean) {
-        val existing = conversationDao.getConversationById(id) ?: return
+    override suspend fun toggleArchiveConversation(id: String, isArchived: Boolean) = withContext(Dispatchers.IO) {
+        val existing = conversationDao.getConversationById(id) ?: return@withContext
         conversationDao.update(existing.copy(isArchived = isArchived, updatedAt = System.currentTimeMillis()))
     }
 
-    override suspend fun deleteConversation(id: String) {
+    override suspend fun deleteConversation(id: String) = withContext(Dispatchers.IO) {
         messageDao.deleteMessagesForConversation(id)
         conversationDao.deleteById(id)
     }
@@ -102,8 +103,8 @@ Core Instructions:
     override fun getMessagesForConversation(conversationId: String): Flow<List<MessageEntity>> =
         messageDao.getMessagesForConversation(conversationId)
 
-    override suspend fun deleteMessage(messageId: String) {
-        val msg = messageDao.getMessageById(messageId) ?: return
+    override suspend fun deleteMessage(messageId: String) = withContext(Dispatchers.IO) {
+        val msg = messageDao.getMessageById(messageId) ?: return@withContext
         messageDao.delete(msg)
     }
 

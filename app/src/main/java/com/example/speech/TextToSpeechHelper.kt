@@ -16,11 +16,17 @@ class TextToSpeechHelper(context: Context) {
     val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
 
     init {
-        tts = TextToSpeech(context.applicationContext) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                isInitialized = true
-                tts?.language = Locale.getDefault()
+        try {
+            tts = TextToSpeech(context.applicationContext) { status ->
+                if (status == TextToSpeech.SUCCESS) {
+                    isInitialized = true
+                    try {
+                        tts?.language = Locale.getDefault()
+                    } catch (_: Exception) {}
+                }
             }
+        } catch (_: Exception) {
+            tts = null
         }
     }
 

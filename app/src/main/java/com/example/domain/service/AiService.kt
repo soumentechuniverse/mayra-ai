@@ -14,7 +14,7 @@ interface AiService {
         history: List<ChatMessage>,
         config: AiModelConfig,
         attachments: List<Attachment>,
-        enableSearch: Boolean
+        enableSearch: Boolean = false
     ): Result<String>
 
     fun generateStream(
@@ -23,6 +23,6 @@ interface AiService {
         history: List<ChatMessage>,
         config: AiModelConfig,
         attachments: List<Attachment>,
-        enableSearch: Boolean
+        enableSearch: Boolean = false
     ): Flow<AiStreamChunk>
 }

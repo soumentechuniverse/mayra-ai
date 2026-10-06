@@ -51,3 +51,10 @@ fun MayraTheme(
         content = content
     )
 }
+
+@Composable
+fun MayraAITheme(
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    content: @Composable () -> Unit
+) = MayraTheme(darkTheme = darkTheme, content = content)
+

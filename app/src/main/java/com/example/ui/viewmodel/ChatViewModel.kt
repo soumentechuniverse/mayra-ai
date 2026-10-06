@@ -19,7 +19,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-class ChatViewModel(
+class ChatViewModel @JvmOverloads constructor(
     application: Application,
     private val repository: ChatRepository = ChatRepositoryImpl(application)
 ) : AndroidViewModel(application) {

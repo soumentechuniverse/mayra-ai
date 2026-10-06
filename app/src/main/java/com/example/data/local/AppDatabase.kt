@@ -30,6 +30,7 @@ abstract class AppDatabase : RoomDatabase() {
                     "mayra_ai.db"
                 )
                     .fallbackToDestructiveMigration()
+                    .allowMainThreadQueries()
                     .build()
                     .also { INSTANCE = it }
             }

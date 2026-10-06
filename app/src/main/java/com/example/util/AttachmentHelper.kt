@@ -119,7 +119,12 @@ object AttachmentHelper {
 
             Result.success(
                 Attachment(
-                    metadata = metadata,
+                    id = metadata.id,
+                    name = metadata.name,
+                    mimeType = metadata.mimeType,
+                    sizeBytes = metadata.sizeBytes,
+                    type = metadata.type,
+                    localUri = metadata.localUri,
                     base64Data = base64Data,
                     textContent = textContent
                 )
