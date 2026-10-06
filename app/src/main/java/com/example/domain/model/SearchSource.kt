@@ -1,8 +1,5 @@
 package com.example.domain.model
 
-/**
- * Represents a verifiable web source / citation retrieved from Grounding with Google Search.
- */
 data class SearchSource(
     val title: String,
     val url: String,
@@ -14,16 +11,9 @@ data class SearchSource(
     companion object {
         fun extractDomain(url: String): String {
             return try {
-                val clean = url.trim()
-                    .removePrefix("http://")
-                    .removePrefix("https://")
-                val endSlash = clean.indexOf('/')
-                val host = if (endSlash != -1) clean.substring(0, endSlash) else clean
-                val portIdx = host.indexOf(':')
-                val hostWithoutPort = if (portIdx != -1) host.substring(0, portIdx) else host
-                hostWithoutPort.removePrefix("www.")
-            } catch (e: Exception) {
-                ""
+                java.net.URI(url).host?.removePrefix("www.") ?: url
+            } catch (_: Exception) {
+                url
             }
         }
     }

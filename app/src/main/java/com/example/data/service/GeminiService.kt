@@ -1022,6 +1022,10 @@ class GeminiService(
                         )
                     }
                 }
+
+                else -> {
+                    // Other attachment types handled gracefully
+                }
             }
         }
 

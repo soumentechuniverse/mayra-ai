@@ -103,9 +103,7 @@ abstract class MayraDatabase : RoomDatabase() {
                         MIGRATION_3_4,
                         MIGRATION_4_5
                     )
-                    .fallbackToDestructiveMigration(
-                        dropAllTables = false
-                    )
+                    .fallbackToDestructiveMigration()
                     .build()
 
                 INSTANCE = instance

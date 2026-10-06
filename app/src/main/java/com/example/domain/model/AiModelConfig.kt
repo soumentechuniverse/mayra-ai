@@ -1,5 +1,11 @@
 package com.example.domain.model
 
+enum class SearchMode {
+    OFF,
+    AUTO,
+    ALWAYS
+}
+
 data class AiModelConfig(
     val modelId: String = "gemini-3.8-flash",
     val displayName: String = "Mayra Flash",

@@ -1,6 +1,7 @@
 package com.example.data.local.dao
 
 import androidx.room.Dao
+import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
@@ -10,24 +11,21 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface MemoryDao {
-    @Query("SELECT * FROM memories ORDER BY updatedAt DESC")
-    fun getAllMemories(): Flow<List<MemoryItemEntity>>
-
     @Query("SELECT * FROM memories WHERE enabled = 1 ORDER BY updatedAt DESC")
     fun getEnabledMemories(): Flow<List<MemoryItemEntity>>
 
+    @Query("SELECT * FROM memories ORDER BY updatedAt DESC")
+    fun getAllMemories(): Flow<List<MemoryItemEntity>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertMemory(memory: MemoryItemEntity)
+    fun insert(memory: MemoryItemEntity)
 
     @Update
-    suspend fun updateMemory(memory: MemoryItemEntity)
+    fun update(memory: MemoryItemEntity)
 
-    @Query("UPDATE memories SET enabled = :enabled, updatedAt = :updatedAt WHERE id = :id")
-    suspend fun updateEnabled(id: String, enabled: Boolean, updatedAt: Long)
+    @Delete
+    fun delete(memory: MemoryItemEntity)
 
     @Query("DELETE FROM memories WHERE id = :id")
-    suspend fun deleteMemoryById(id: String)
-
-    @Query("DELETE FROM memories")
-    suspend fun clearAllMemories()
+    fun deleteById(id: String)
 }
