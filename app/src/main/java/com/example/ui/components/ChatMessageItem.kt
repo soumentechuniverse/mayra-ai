@@ -3,967 +3,342 @@ package com.example.ui.components
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.graphics.BitmapFactory
-import android.util.Base64
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
-import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.OpenInNew
-import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.ErrorOutline
-import androidx.compose.material.icons.outlined.Image
-import androidx.compose.material.icons.outlined.Pause
-import androidx.compose.material.icons.outlined.PictureAsPdf
-import androidx.compose.material.icons.outlined.PlayArrow
-import androidx.compose.material.icons.outlined.Public
-import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.Stop
-import androidx.compose.material.icons.outlined.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextDirection
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import coil.compose.AsyncImage
-import com.example.domain.model.AttachmentMetadata
-import com.example.domain.model.AttachmentType
-import com.example.domain.model.ChatMessage
-import com.example.domain.model.MessageRole
-import com.example.domain.model.MessageStatus
-import com.example.domain.model.SearchSource
-import com.example.domain.model.VoiceState
+import com.example.data.local.entity.MessageEntity
+import com.example.data.remote.RetrofitClient
+import com.example.data.remote.model.WebSourceCitation
+import com.example.ui.theme.MayraAssistantBubble
 import com.example.ui.theme.MayraCyan
-import com.example.ui.theme.MayraCyanBright
-import com.example.ui.theme.MayraDarkSurfaceElevated
-import com.example.ui.theme.MayraDarkSurfaceBorder
+import com.example.ui.theme.MayraDarkBorder
+import com.example.ui.theme.MayraDarkSurface
+import com.example.ui.theme.MayraDarkSurfaceVariant
+import com.example.ui.theme.MayraErrorRed
 import com.example.ui.theme.MayraIndigo
-import com.example.ui.theme.MayraRose
-import com.example.ui.theme.MayraViolet
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import com.example.ui.theme.MayraTextMuted
+import com.example.ui.theme.MayraTextPrimary
+import com.example.ui.theme.MayraTextSecondary
+import com.example.ui.theme.MayraUserBubble
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ChatMessageItem(
-    message: ChatMessage,
-    onRetry: () -> Unit,
-    onCopiedFeedback: () -> Unit,
-    voiceState: VoiceState = VoiceState.Idle,
-    onSpeak: () -> Unit = {},
-    onPauseSpeech: () -> Unit = {},
-    onResumeSpeech: () -> Unit = {},
-    onStopSpeech: () -> Unit = {},
+    message: MessageEntity,
+    onRetry: (String) -> Unit,
+    onSpeak: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val isUser = message.role == MessageRole.USER
+    val isUser = message.role == "user"
     val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-    var isMessageCopied by remember { mutableStateOf(false) }
 
-    AnimatedVisibility(
-        visible = true,
-        enter = fadeIn() + slideInVertically(initialOffsetY = { 20 }),
-        modifier = modifier
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 6.dp),
-            horizontalAlignment =
-                if (isUser) Alignment.End else Alignment.Start
-        ) {
-
-            if (isUser) {
-
-                Column(
-                    horizontalAlignment = Alignment.End,
-                    modifier = Modifier.widthIn(max = 320.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .clip(
-                                RoundedCornerShape(
-                                    topStart = 18.dp,
-                                    topEnd = 18.dp,
-                                    bottomStart = 18.dp,
-                                    bottomEnd = 4.dp
-                                )
-                            )
-                            .background(
-                                Brush.linearGradient(
-                                    listOf(
-                                        Color(0xFF13203C),
-                                        Color(0xFF0F1A30)
-                                    )
-                                )
-                            )
-                            .border(
-                                1.dp,
-                                MayraCyan.copy(alpha = 0.35f),
-                                RoundedCornerShape(
-                                    topStart = 18.dp,
-                                    topEnd = 18.dp,
-                                    bottomStart = 18.dp,
-                                    bottomEnd = 4.dp
-                                )
-                            )
-                            .padding(
-                                horizontal = 14.dp,
-                                vertical = 10.dp
-                            )
-                    ) {
-                        Column {
-
-                            if (message.attachments.isNotEmpty()) {
-                                Column(
-                                    verticalArrangement =
-                                        Arrangement.spacedBy(8.dp),
-                                    modifier = Modifier.padding(
-                                        bottom =
-                                            if (message.content.isNotBlank())
-                                                8.dp
-                                            else 0.dp
-                                    )
-                                ) {
-                                    message.attachments.forEach {
-                                        UserAttachmentPreview(
-                                            attachment = it
-                                        )
-                                    }
-                                }
-                            }
-
-                            if (message.content.isNotBlank()) {
-                                Text(
-                                    text = message.content,
-                                    style = MaterialTheme.typography.bodyLarge.copy(
-                                        textDirection =
-                                            TextDirection.ContentOrLtr,
-                                        lineHeight = 22.sp
-                                    ),
-                                    color =
-                                        MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    Text(
-                        text = formatTime(message.timestamp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme
-                            .onSurfaceVariant.copy(alpha = 0.7f),
-                        modifier = Modifier.padding(end = 4.dp)
-                    )
-                }
-
-            } else {
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(end = 12.dp)
-                ) {
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement =
-                            Arrangement.spacedBy(8.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(26.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(
-                                    Brush.linearGradient(
-                                        listOf(
-                                            MayraCyanBright,
-                                            MayraIndigo,
-                                            MayraViolet
-                                        )
-                                    )
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "M",
-                                style =
-                                    MaterialTheme.typography.labelSmall.copy(
-                                        fontWeight = FontWeight.Black,
-                                        color = Color.White
-                                    )
-                            )
-                        }
-
-                        Text(
-                            text = "Mayra AI",
-                            style =
-                                MaterialTheme.typography.labelMedium.copy(
-                                    fontWeight = FontWeight.SemiBold
-                                ),
-                            color = MayraCyan
-                        )
-
-                        Text(
-                            text = "• ${formatTime(message.timestamp)}",
-                            style =
-                                MaterialTheme.typography.labelSmall,
-                            color =
-                                MaterialTheme.colorScheme
-                                    .onSurfaceVariant
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    if (message.status == MessageStatus.ERROR) {
-
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(Color(0xFF241017))
-                                .border(
-                                    1.dp,
-                                    MayraRose.copy(alpha = 0.4f),
-                                    RoundedCornerShape(14.dp)
-                                )
-                                .padding(14.dp)
-                        ) {
-                            Column {
-
-                                Row(
-                                    verticalAlignment =
-                                        Alignment.CenterVertically,
-                                    horizontalArrangement =
-                                        Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Icon(
-                                        imageVector =
-                                            Icons.Outlined.ErrorOutline,
-                                        contentDescription = "Error",
-                                        tint = MayraRose,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-
-                                    Text(
-                                        text =
-                                            message.errorMessage
-                                                ?: "Failed to generate response.",
-                                        style =
-                                            MaterialTheme.typography.bodyMedium,
-                                        color = MayraRose
-                                    )
-                                }
-
-                                Spacer(
-                                    modifier = Modifier.height(8.dp)
-                                )
-
-                                FilledTonalButton(
-                                    onClick = onRetry,
-                                    colors =
-                                        ButtonDefaults
-                                            .filledTonalButtonColors(
-                                                containerColor =
-                                                    MayraRose.copy(
-                                                        alpha = 0.2f
-                                                    ),
-                                                contentColor = MayraRose
-                                            ),
-                                    shape =
-                                        RoundedCornerShape(8.dp),
-                                    modifier =
-                                        Modifier.testTag(
-                                            "retry_message_button"
-                                        )
-                                ) {
-                                    Icon(
-                                        imageVector =
-                                            Icons.Outlined.Refresh,
-                                        contentDescription = null,
-                                        modifier =
-                                            Modifier.size(14.dp)
-                                    )
-
-                                    Spacer(
-                                        modifier = Modifier.width(4.dp)
-                                    )
-
-                                    Text(
-                                        text = "Retry",
-                                        style =
-                                            MaterialTheme.typography
-                                                .labelSmall
-                                    )
-                                }
-                            }
-                        }
-
-                    } else {
-
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(
-                                    RoundedCornerShape(
-                                        topStart = 4.dp,
-                                        topEnd = 16.dp,
-                                        bottomStart = 16.dp,
-                                        bottomEnd = 16.dp
-                                    )
-                                )
-                                .background(
-                                    MayraDarkSurfaceElevated
-                                        .copy(alpha = 0.65f)
-                                )
-                                .border(
-                                    1.dp,
-                                    MayraDarkSurfaceBorder
-                                        .copy(alpha = 0.6f),
-                                    RoundedCornerShape(16.dp)
-                                )
-                                .padding(
-                                    horizontal = 16.dp,
-                                    vertical = 14.dp
-                                )
-                        ) {
-
-                            message.generatedImageBase64?.let { base64 ->
-
-                                GeneratedImagePreview(
-                                    base64Data = base64,
-                                    mimeType =
-                                        message.generatedImageMimeType
-                                            ?: "image/png"
-                                )
-
-                                if (message.content.isNotBlank()) {
-                                    Spacer(
-                                        modifier = Modifier.height(12.dp)
-                                    )
-                                }
-                            }
-
-                            if (message.content.isNotBlank()) {
-                                MarkdownContent(
-                                    content = message.content,
-                                    textColor =
-                                        MaterialTheme.colorScheme.onSurface,
-                                    onCodeCopied =
-                                        onCopiedFeedback
-                                )
-                            }
-
-                            if (message.searchSources.isNotEmpty()) {
-                                AssistantSourcesSection(
-                                    sources = message.searchSources
-                                )
-                            }
-                        }
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(
-                                    top = 4.dp,
-                                    start = 4.dp
-                                ),
-                            horizontalArrangement =
-                                Arrangement.spacedBy(6.dp),
-                            verticalAlignment =
-                                Alignment.CenterVertically
-                        ) {
-
-                            IconButton(
-                                onClick = {
-                                    val clipboard =
-                                        context.getSystemService(
-                                            Context.CLIPBOARD_SERVICE
-                                        ) as ClipboardManager
-
-                                    val clip =
-                                        ClipData.newPlainText(
-                                            "Mayra AI response",
-                                            message.content
-                                        )
-
-                                    clipboard.setPrimaryClip(clip)
-                                    isMessageCopied = true
-                                    onCopiedFeedback()
-
-                                    coroutineScope.launch {
-                                        delay(2000)
-                                        isMessageCopied = false
-                                    }
-                                },
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .testTag(
-                                        "copy_ai_message_button"
-                                    )
-                            ) {
-                                Icon(
-                                    imageVector =
-                                        if (isMessageCopied)
-                                            Icons.Outlined.Check
-                                        else
-                                            Icons.Outlined.ContentCopy,
-                                    contentDescription =
-                                        if (isMessageCopied)
-                                            "Copied"
-                                        else
-                                            "Copy response",
-                                    tint =
-                                        if (isMessageCopied)
-                                            MaterialTheme.colorScheme
-                                                .tertiary
-                                        else
-                                            MaterialTheme.colorScheme
-                                                .onSurfaceVariant,
-                                    modifier = Modifier.size(15.dp)
-                                )
-                            }
-
-                            if (
-                                message.status ==
-                                    MessageStatus.SENT &&
-                                message.content.isNotBlank()
-                            ) {
-
-                                val isThisMessageSpeaking =
-                                    voiceState is VoiceState.Speaking &&
-                                        voiceState.messageId ==
-                                            message.id
-
-                                val isPaused =
-                                    isThisMessageSpeaking &&
-                                        (voiceState as VoiceState.Speaking)
-                                            .isPaused
-
-                                if (isThisMessageSpeaking) {
-
-                                    IconButton(
-                                        onClick =
-                                            if (isPaused)
-                                                onResumeSpeech
-                                            else
-                                                onPauseSpeech,
-                                        modifier =
-                                            Modifier.size(32.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector =
-                                                if (isPaused)
-                                                    Icons.Outlined.PlayArrow
-                                                else
-                                                    Icons.Outlined.Pause,
-                                            contentDescription =
-                                                if (isPaused)
-                                                    "Resume"
-                                                else
-                                                    "Pause",
-                                            tint = MayraCyan,
-                                            modifier =
-                                                Modifier.size(16.dp)
-                                        )
-                                    }
-
-                                    IconButton(
-                                        onClick = onStopSpeech,
-                                        modifier =
-                                            Modifier.size(32.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector =
-                                                Icons.Outlined.Stop,
-                                            contentDescription = "Stop",
-                                            tint = MayraRose,
-                                            modifier =
-                                                Modifier.size(16.dp)
-                                        )
-                                    }
-
-                                } else {
-
-                                    IconButton(
-                                        onClick = onSpeak,
-                                        modifier =
-                                            Modifier.size(32.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector =
-                                                Icons.Outlined.VolumeUp,
-                                            contentDescription =
-                                                "Listen",
-                                            tint =
-                                                MaterialTheme.colorScheme
-                                                    .onSurfaceVariant,
-                                            modifier =
-                                                Modifier.size(16.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun GeneratedImagePreview(
-    base64Data: String,
-    mimeType: String,
-    modifier: Modifier = Modifier
-) {
-    val bitmap = remember(base64Data) {
-        try {
-            val bytes =
-                Base64.decode(
-                    base64Data,
-                    Base64.DEFAULT
-                )
-
-            BitmapFactory.decodeByteArray(
-                bytes,
-                0,
-                bytes.size
-            )
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    if (bitmap != null) {
-
-        Column(
-            modifier = modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .border(
-                    1.dp,
-                    MayraCyan.copy(alpha = 0.35f),
-                    RoundedCornerShape(14.dp)
-                )
-        ) {
-            androidx.compose.foundation.Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = "AI generated image",
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 520.dp)
-                    .clip(RoundedCornerShape(14.dp))
-            )
-
-            Text(
-                text = "AI generated image",
-                style = MaterialTheme.typography.labelSmall,
-                color = MayraCyan.copy(alpha = 0.8f),
-                modifier = Modifier.padding(
-                    horizontal = 10.dp,
-                    vertical = 7.dp
-                )
-            )
-        }
-
-    } else {
-
-        Text(
-            text = "Unable to display generated image.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MayraRose
-        )
-    }
-}
-
-private fun formatTime(timestamp: Long): String {
-    val formatter =
-        SimpleDateFormat(
-            "h:mm a",
-            Locale.getDefault()
-        )
-
-    return formatter.format(Date(timestamp))
-}
-
-@Composable
-private fun UserAttachmentPreview(
-    attachment: AttachmentMetadata,
-    modifier: Modifier = Modifier
-) {
-    when (attachment.type) {
-
-        AttachmentType.IMAGE -> {
-
-            if (!attachment.localUri.isNullOrBlank()) {
-
-                Box(
-                    modifier = modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .border(
-                            1.dp,
-                            MayraCyan.copy(alpha = 0.3f),
-                            RoundedCornerShape(12.dp)
-                        )
-                ) {
-                    AsyncImage(
-                        model = attachment.localUri,
-                        contentDescription =
-                            attachment.name,
-                        contentScale =
-                            ContentScale.Crop,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 200.dp)
-                            .clip(
-                                RoundedCornerShape(12.dp)
-                            )
-                    )
-                }
-
-            } else {
-
-                Row(
-                    verticalAlignment =
-                        Alignment.CenterVertically,
-                    horizontalArrangement =
-                        Arrangement.spacedBy(8.dp),
-                    modifier = modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(
-                            MayraDarkSurfaceElevated
-                        )
-                        .padding(
-                            horizontal = 10.dp,
-                            vertical = 6.dp
-                        )
-                ) {
-                    Icon(
-                        imageVector =
-                            Icons.Outlined.Image,
-                        contentDescription = null,
-                        tint = MayraCyan,
-                        modifier = Modifier.size(18.dp)
-                    )
-
-                    Text(
-                        text = attachment.name,
-                        style =
-                            MaterialTheme.typography.bodySmall,
-                        color =
-                            MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow =
-                            TextOverflow.Ellipsis
-                    )
-                }
-            }
-        }
-
-        AttachmentType.PDF -> {
-
-            Row(
-                verticalAlignment =
-                    Alignment.CenterVertically,
-                horizontalArrangement =
-                    Arrangement.spacedBy(8.dp),
-                modifier = modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFF26131D))
-                    .border(
-                        1.dp,
-                        MayraRose.copy(alpha = 0.35f),
-                        RoundedCornerShape(10.dp)
-                    )
-                    .padding(
-                        horizontal = 10.dp,
-                        vertical = 8.dp
-                    )
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(
-                            MayraRose.copy(alpha = 0.2f)
-                        ),
-                    contentAlignment =
-                        Alignment.Center
-                ) {
-                    Icon(
-                        imageVector =
-                            Icons.Outlined.PictureAsPdf,
-                        contentDescription = null,
-                        tint = MayraRose,
-                        modifier =
-                            Modifier.size(18.dp)
-                    )
-                }
-
-                Column(
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(
-                        text = attachment.name,
-                        style =
-                            MaterialTheme.typography.labelMedium,
-                        color =
-                            MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow =
-                            TextOverflow.Ellipsis
-                    )
-
-                    if (attachment.formattedSize.isNotEmpty()) {
-                        Text(
-                            text = attachment.formattedSize,
-                            style =
-                                MaterialTheme.typography.labelSmall,
-                            color =
-                                MayraRose.copy(alpha = 0.8f)
-                        )
-                    }
-                }
-            }
-        }
-
-        AttachmentType.DOCUMENT -> {
-
-            Row(
-                verticalAlignment =
-                    Alignment.CenterVertically,
-                horizontalArrangement =
-                    Arrangement.spacedBy(8.dp),
-                modifier = modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFF131E33))
-                    .border(
-                        1.dp,
-                        MayraCyan.copy(alpha = 0.3f),
-                        RoundedCornerShape(10.dp)
-                    )
-                    .padding(
-                        horizontal = 10.dp,
-                        vertical = 8.dp
-                    )
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(
-                            MayraCyan.copy(alpha = 0.2f)
-                        ),
-                    contentAlignment =
-                        Alignment.Center
-                ) {
-                    Icon(
-                        imageVector =
-                            Icons.Outlined.Description,
-                        contentDescription = null,
-                        tint = MayraCyan,
-                        modifier =
-                            Modifier.size(18.dp)
-                    )
-                }
-
-                Column(
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(
-                        text = attachment.name,
-                        style =
-                            MaterialTheme.typography.labelMedium,
-                        color =
-                            MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow =
-                            TextOverflow.Ellipsis
-                    )
-
-                    if (attachment.formattedSize.isNotEmpty()) {
-                        Text(
-                            text = attachment.formattedSize,
-                            style =
-                                MaterialTheme.typography.labelSmall,
-                            color =
-                                MayraCyan.copy(alpha = 0.8f)
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AssistantSourcesSection(
-    sources: List<SearchSource>,
-    modifier: Modifier = Modifier
-) {
-    val uriHandler = LocalUriHandler.current
-
-    Column(
+    Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(top = 10.dp)
-            .testTag("sources_section")
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.Top
     ) {
-
-        Row(
-            verticalAlignment =
-                Alignment.CenterVertically,
-            horizontalArrangement =
-                Arrangement.spacedBy(6.dp),
-            modifier = Modifier.padding(bottom = 6.dp)
-        ) {
-            Icon(
-                imageVector =
-                    Icons.Outlined.Public,
-                contentDescription = null,
-                tint = MayraCyan,
-                modifier = Modifier.size(15.dp)
-            )
-
-            Text(
-                text = "Sources",
-                style =
-                    MaterialTheme.typography.labelMedium.copy(
-                        fontWeight = FontWeight.SemiBold
-                    ),
-                color = MayraCyan
-            )
+        // Assistant Avatar
+        if (!isUser) {
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(MayraIndigo)
+                    .border(1.dp, MayraCyan, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.AutoAwesome,
+                    contentDescription = "Mayra AI",
+                    tint = MayraCyan,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
         }
 
-        LazyRow(
-            horizontalArrangement =
-                Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth()
+        // Message Content Bubble
+        Column(
+            modifier = Modifier.widthIn(max = 320.dp),
+            horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
         ) {
-            items(sources) { source ->
+            // User Attachment Display
+            if (isUser && (!message.attachmentUri.isNullOrBlank() || !message.attachmentName.isNullOrBlank())) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MayraDarkSurfaceVariant,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MayraDarkBorder),
+                    modifier = Modifier.padding(bottom = 6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AttachFile,
+                            contentDescription = "Attachment",
+                            tint = MayraCyan,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = message.attachmentName ?: "Attachment",
+                            color = MayraTextPrimary,
+                            fontSize = 12.sp,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
 
-                SourceCitationChip(
-                    source = source,
-                    index = sources.indexOf(source),
-                    onClick = {
-                        try {
-                            uriHandler.openUri(source.url)
-                        } catch (_: Exception) {
+            // Bubble container
+            Surface(
+                shape = RoundedCornerShape(
+                    topStart = 16.dp,
+                    topEnd = 16.dp,
+                    bottomStart = if (isUser) 16.dp else 4.dp,
+                    bottomEnd = if (isUser) 4.dp else 16.dp
+                ),
+                color = if (isUser) MayraUserBubble else MayraAssistantBubble,
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (message.status == "ERROR") MayraErrorRed else MayraDarkBorder
+                ),
+                modifier = Modifier.testTag(if (isUser) "user_message_bubble" else "assistant_message_bubble")
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    // Generated Image (if any)
+                    if (!message.imageUrl.isNullOrBlank()) {
+                        AsyncImage(
+                            model = message.imageUrl,
+                            contentDescription = "Generated image",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(220.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .border(1.dp, MayraDarkBorder, RoundedCornerShape(10.dp)),
+                            contentScale = ContentScale.Crop
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
+
+                    // Content rendering
+                    if (message.status == "SENDING" && message.content.isBlank()) {
+                        ThinkingIndicator()
+                    } else {
+                        MarkdownContent(
+                            content = message.content,
+                            textColor = MayraTextPrimary
+                        )
+
+                        // Subtle typing indicator if still streaming
+                        if (message.status == "SENDING") {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(12.dp),
+                                    strokeWidth = 1.5.dp,
+                                    color = MayraCyan
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Streaming...",
+                                    fontSize = 11.sp,
+                                    color = MayraTextMuted
+                                )
+                            }
                         }
                     }
+
+                    // Web Search Sources Citations
+                    if (!message.sourcesJson.isNullOrBlank()) {
+                        val citations = remember(message.sourcesJson) {
+                            try {
+                                RetrofitClient.json.decodeFromString<List<WebSourceCitation>>(message.sourcesJson)
+                            } catch (_: Exception) {
+                                emptyList()
+                            }
+                        }
+
+                        if (citations.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "Sources & Citations:",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MayraCyan
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                citations.forEach { citation ->
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = MayraDarkSurfaceVariant,
+                                        border = androidx.compose.foundation.BorderStroke(0.5.dp, MayraCyan.copy(alpha = 0.5f)),
+                                        modifier = Modifier.clickable {
+                                            try {
+                                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(citation.url)))
+                                            } catch (_: Exception) {}
+                                        }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Language,
+                                                contentDescription = null,
+                                                tint = MayraCyan,
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = citation.title.take(24),
+                                                fontSize = 11.sp,
+                                                color = MayraTextSecondary
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Error retry affordance
+                    if (message.status == "ERROR") {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        OutlinedButton(
+                            onClick = { onRetry(message.id) },
+                            modifier = Modifier.testTag("retry_button"),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MayraCyan),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MayraCyan),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Retry",
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Retry", fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+
+            // Message Actions (Only for Assistant messages when done)
+            if (!isUser && message.status == "SENT" && message.content.isNotBlank()) {
+                Row(
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = { onSpeak(message.content) },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                            contentDescription = "Read aloud",
+                            tint = MayraTextMuted,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(4.dp))
+
+                    IconButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("response", message.content))
+                            Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ContentCopy,
+                            contentDescription = "Copy text",
+                            tint = MayraTextMuted,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // User Avatar
+        if (isUser) {
+            Spacer(modifier = Modifier.width(8.dp))
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(MayraDarkSurfaceVariant)
+                    .border(1.dp, MayraIndigo, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Person,
+                    contentDescription = "User",
+                    tint = MayraTextSecondary,
+                    modifier = Modifier.size(18.dp)
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun SourceCitationChip(
-    source: SearchSource,
-    index: Int,
-    onClick: () -> Unit
-) {
-    Row(
-        verticalAlignment =
-            Alignment.CenterVertically,
-        horizontalArrangement =
-            Arrangement.spacedBy(6.dp),
-        modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(Color(0xFF141A29))
-            .border(
-                1.dp,
-                Color(0xFF232D42),
-                RoundedCornerShape(10.dp)
-            )
-            .clickable(onClick = onClick)
-            .padding(
-                horizontal = 10.dp,
-                vertical = 6.dp
-            )
-            .testTag(
-                "source_citation_$index"
-            )
-    ) {
-
-        Text(
-            text =
-                source.domain.ifBlank {
-                    source.title
-                },
-            style =
-                MaterialTheme.typography.labelSmall.copy(
-                    fontWeight = FontWeight.Medium
-                ),
-            color =
-                MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow =
-                TextOverflow.Ellipsis,
-            modifier =
-                Modifier.widthIn(max = 140.dp)
-        )
-
-        Icon(
-            imageVector =
-                Icons.AutoMirrored.Outlined.OpenInNew,
-            contentDescription =
-                "Open source",
-            tint = MayraCyan,
-            modifier = Modifier.size(12.dp)
-        )
     }
 }

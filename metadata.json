@@ -1,6 +1,6 @@
 {
-  "name": "Mayra AI",
-  "description": "Modern premium multilingual AI assistant designed for seamless thinking, writing, code generation, and intelligent conversations.",
+  "name": "Mayra",
+  "description": "Fast, reliable, production-quality multimodal AI assistant",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

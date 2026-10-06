@@ -1,45 +1,42 @@
 package com.example.data.repository
 
-import com.example.domain.model.AiModelConfig
-import com.example.domain.model.Attachment
-import com.example.domain.model.ChatMessage
-import com.example.domain.model.Conversation
-import com.example.domain.model.MemoryCategory
-import com.example.domain.model.MemoryItem
-import com.example.domain.model.SearchPhase
-import kotlinx.coroutines.flow.StateFlow
+import com.example.data.local.entity.ConversationEntity
+import com.example.data.local.entity.MessageEntity
+import com.example.data.remote.model.WebSourceCitation
+import kotlinx.coroutines.flow.Flow
+
+sealed class StreamEvent {
+    data class TextChunk(val text: String) : StreamEvent()
+    data class SourcesDiscovered(val sources: List<WebSourceCitation>) : StreamEvent()
+    data class Completed(val fullText: String, val sources: List<WebSourceCitation>) : StreamEvent()
+    data class Error(val message: String, val isRetryable: Boolean) : StreamEvent()
+}
 
 interface ChatRepository {
-    val activeConversation: StateFlow<Conversation?>
-    val messages: StateFlow<List<ChatMessage>>
-    val conversations: StateFlow<List<Conversation>>
-    val memories: StateFlow<List<MemoryItem>>
-    val isMemoryEnabled: StateFlow<Boolean>
-    val isGenerating: StateFlow<Boolean>
-    val searchPhase: StateFlow<SearchPhase>
+    fun getConversations(): Flow<List<ConversationEntity>>
+    fun getArchivedConversations(): Flow<List<ConversationEntity>>
+    fun searchConversations(query: String): Flow<List<ConversationEntity>>
+    suspend fun getConversationById(id: String): ConversationEntity?
+    suspend fun createConversation(title: String): ConversationEntity
+    suspend fun updateConversationTitle(id: String, newTitle: String)
+    suspend fun togglePinConversation(id: String, isPinned: Boolean)
+    suspend fun toggleArchiveConversation(id: String, isArchived: Boolean)
+    suspend fun deleteConversation(id: String)
 
-    suspend fun startNewConversation(title: String = "New Chat"): Conversation
-    suspend fun selectConversation(conversationId: String)
-    suspend fun renameConversation(conversationId: String, newTitle: String)
-    suspend fun togglePinConversation(conversationId: String)
-    suspend fun toggleArchiveConversation(conversationId: String)
+    fun getMessagesForConversation(conversationId: String): Flow<List<MessageEntity>>
+    suspend fun deleteMessage(messageId: String)
+
     suspend fun sendMessage(
-        content: String,
-        config: AiModelConfig,
-        attachments: List<Attachment> = emptyList()
-    ): Result<ChatMessage>
-    suspend fun retryLastFailed(config: AiModelConfig): Result<ChatMessage>
-    suspend fun clearMessages()
-    suspend fun deleteConversation(conversationId: String)
-    suspend fun cancelGeneration()
+        conversationId: String,
+        userPrompt: String,
+        attachmentBytes: ByteArray? = null,
+        attachmentMimeType: String? = null,
+        attachmentName: String? = null,
+        attachmentUriString: String? = null
+    ): Flow<StreamEvent>
 
-    // Memory Management
-    fun setMemoryEnabled(enabled: Boolean)
-    suspend fun saveMemory(content: String, category: MemoryCategory = MemoryCategory.OTHER): MemoryItem
-    suspend fun toggleMemoryItemEnabled(memoryId: String, enabled: Boolean)
-    suspend fun deleteMemory(memoryId: String)
-    suspend fun clearAllMemories()
-
-    // Search
-    suspend fun searchConversations(query: String): List<Conversation>
+    suspend fun retryMessage(
+        conversationId: String,
+        failedMessageId: String
+    ): Flow<StreamEvent>
 }

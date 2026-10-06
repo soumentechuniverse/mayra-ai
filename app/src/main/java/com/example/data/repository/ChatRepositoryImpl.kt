@@ -1,1861 +1,537 @@
 package com.example.data.repository
 
-import com.example.data.local.MemoryPreferences
-import com.example.data.local.dao.ConversationDao
-import com.example.data.local.dao.MemoryDao
-import com.example.data.local.entity.ChatMessageEntity
+import android.content.Context
+import android.util.Base64
+import com.example.BuildConfig
+import com.example.data.local.AppDatabase
 import com.example.data.local.entity.ConversationEntity
-import com.example.data.local.entity.MemoryItemEntity
-import com.example.data.service.DefaultSearchIntentDetector
-import com.example.data.service.ImageGenerationService
-import com.example.data.service.ImageRetrievalService
-import com.example.data.service.RetrievedImageResult
-import com.example.domain.model.AiModelConfig
-import com.example.domain.model.Attachment
-import com.example.domain.model.ChatMessage
-import com.example.domain.model.Conversation
-import com.example.domain.model.MemoryCategory
-import com.example.domain.model.MemoryItem
-import com.example.domain.model.MessageRole
-import com.example.domain.model.MessageStatus
-import com.example.domain.model.SearchPhase
-import com.example.domain.model.SearchSource
-import com.example.domain.service.AiService
-import com.example.domain.service.MemoryDetector
-import com.example.domain.service.SearchIntentDetector
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
+import com.example.data.local.entity.MessageEntity
+import com.example.data.remote.RetrofitClient
+import com.example.data.remote.model.Candidate
+import com.example.data.remote.model.Content
+import com.example.data.remote.model.GenerateContentRequest
+import com.example.data.remote.model.GenerationConfig
+import com.example.data.remote.model.InlineData
+import com.example.data.remote.model.Part
+import com.example.data.remote.model.ThinkingConfig
+import com.example.data.remote.model.WebSourceCitation
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
-import java.util.Locale
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.putJsonObject
+import retrofit2.HttpException
+import java.io.IOException
+import java.net.URLEncoder
 import java.util.UUID
 
 class ChatRepositoryImpl(
-    private val aiService: AiService,
-    private val conversationDao: ConversationDao? = null,
-    private val memoryDao: MemoryDao? = null,
-    private val memoryPreferences: MemoryPreferences? = null,
-    private val searchIntentDetector: SearchIntentDetector =
-        DefaultSearchIntentDetector(),
-    private val imageRetrievalService: ImageRetrievalService =
-        com.example.data.service.WikimediaImageRetrievalService(),
-    private val imageGenerationService: ImageGenerationService =
-        ImageGenerationService(),
-    private val scope: CoroutineScope =
-        CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val context: Context,
+    private val database: AppDatabase = AppDatabase.getInstance(context)
 ) : ChatRepository {
 
-    private val _activeConversation =
-        MutableStateFlow<Conversation?>(null)
+    private val conversationDao = database.conversationDao()
+    private val messageDao = database.messageDao()
+    private val geminiService = RetrofitClient.geminiApiService
 
-    override val activeConversation: StateFlow<Conversation?> =
-        _activeConversation.asStateFlow()
+    companion object {
+        const val PRIMARY_MODEL = "gemini-3.8-flash"
 
-    private val _messages =
-        MutableStateFlow<List<ChatMessage>>(emptyList())
+        private const val SYSTEM_PROMPT = """
+You are Mayra AI, an intelligent, fast, and highly capable multimodal AI assistant developed by Soumen Mondal.
 
-    override val messages: StateFlow<List<ChatMessage>> =
-        _messages.asStateFlow()
+Core Instructions:
+1. Always reply in the exact language used by the user (Bengali, Hindi, English, Urdu, Arabic, Spanish, French, German, etc.) unless requested otherwise.
+2. For simple greetings, arithmetic, definitions, and short factual questions, be direct, natural, and answer immediately without unnecessary preamble.
+3. For image attachments, analyze the image thoroughly (objects, scenery, text, charts, diagrams, screenshots, context). If the image contains a person, do not attempt to guess or claim to identify their real personal identity.
+4. For uploaded files, extract insights directly from the document content provided.
+5. Format your output cleanly in Markdown using bold, lists, tables, and fenced code blocks with language identifiers where appropriate.
+6. When web search citations are available, seamlessly incorporate the findings into your answer.
+"""
+    }
 
-    private val _conversations =
-        MutableStateFlow<List<Conversation>>(emptyList())
+    override fun getConversations(): Flow<List<ConversationEntity>> =
+        conversationDao.getActiveConversations()
 
-    override val conversations: StateFlow<List<Conversation>> =
-        _conversations.asStateFlow()
+    override fun getArchivedConversations(): Flow<List<ConversationEntity>> =
+        conversationDao.getArchivedConversations()
 
-    private val _memories =
-        MutableStateFlow<List<MemoryItem>>(emptyList())
+    override fun searchConversations(query: String): Flow<List<ConversationEntity>> =
+        conversationDao.searchConversations(query)
 
-    override val memories: StateFlow<List<MemoryItem>> =
-        _memories.asStateFlow()
+    override suspend fun getConversationById(id: String): ConversationEntity? =
+        conversationDao.getConversationById(id)
 
-    private val _isMemoryEnabled =
-        MutableStateFlow(
-            memoryPreferences?.isMemoryEnabled?.value ?: true
+    override suspend fun createConversation(title: String): ConversationEntity {
+        val conv = ConversationEntity(
+            id = UUID.randomUUID().toString(),
+            title = title.ifBlank { "New Conversation" },
+            createdAt = System.currentTimeMillis(),
+            updatedAt = System.currentTimeMillis()
         )
-
-    override val isMemoryEnabled: StateFlow<Boolean> =
-        _isMemoryEnabled.asStateFlow()
-
-    private val _isGenerating =
-        MutableStateFlow(false)
-
-    override val isGenerating: StateFlow<Boolean> =
-        _isGenerating.asStateFlow()
-
-    private val _searchPhase =
-        MutableStateFlow(SearchPhase.IDLE)
-
-    override val searchPhase: StateFlow<SearchPhase> =
-        _searchPhase.asStateFlow()
-
-    private var activeGenerationJob: Job? = null
-    private var messagesCollectionJob: Job? = null
-
-    private val inMemoryMessages =
-        mutableListOf<ChatMessage>()
-
-    private var lastSentAttachments =
-        mutableListOf<Attachment>()
-
-    init {
-
-        if (conversationDao != null) {
-            scope.launch {
-                try {
-                    val entities =
-                        conversationDao
-                            .getAllConversations()
-                            .first()
-
-                    val domainList =
-                        entities.map { it.toDomain() }
-
-                    if (
-                        domainList.isNotEmpty() &&
-                        _conversations.value.isEmpty()
-                    ) {
-                        _conversations.value = domainList
-
-                        if (_activeConversation.value == null) {
-                            selectConversation(
-                                domainList.first().id
-                            )
-                        }
-                    }
-
-                } catch (_: Exception) {
-                    // Safe fallback.
-                }
-            }
-        }
-
-        if (memoryDao != null) {
-            scope.launch {
-                try {
-                    val entities =
-                        memoryDao
-                            .getAllMemories()
-                            .first()
-
-                    val domainList =
-                        entities.map { it.toDomain() }
-
-                    if (
-                        domainList.isNotEmpty() &&
-                        _memories.value.isEmpty()
-                    ) {
-                        _memories.value = domainList
-                    }
-
-                } catch (_: Exception) {
-                    // Safe fallback.
-                }
-            }
-        }
-
-        if (memoryPreferences != null) {
-            scope.launch {
-                memoryPreferences
-                    .isMemoryEnabled
-                    .collect { enabled ->
-                        _isMemoryEnabled.value = enabled
-                    }
-            }
-        }
-
-        if (_activeConversation.value == null) {
-
-            val initial =
-                Conversation(
-                    id = UUID.randomUUID().toString(),
-                    title = "New Chat",
-                    createdAt = System.currentTimeMillis(),
-                    updatedAt = System.currentTimeMillis()
-                )
-
-            _activeConversation.value = initial
-            _conversations.value = listOf(initial)
-
-            if (conversationDao != null) {
-                scope.launch {
-                    try {
-                        conversationDao.insertConversation(
-                            ConversationEntity.fromDomain(initial)
-                        )
-                    } catch (_: Exception) {
-                        // Safe fallback.
-                    }
-                }
-            }
-        }
+        conversationDao.insertOrUpdate(conv)
+        return conv
     }
 
-    override suspend fun startNewConversation(
-        title: String
-    ): Conversation {
+    override suspend fun updateConversationTitle(id: String, newTitle: String) {
+        val existing = conversationDao.getConversationById(id) ?: return
+        conversationDao.update(existing.copy(title = newTitle, updatedAt = System.currentTimeMillis()))
+    }
 
-        cancelGeneration()
+    override suspend fun togglePinConversation(id: String, isPinned: Boolean) {
+        val existing = conversationDao.getConversationById(id) ?: return
+        conversationDao.update(existing.copy(isPinned = isPinned, updatedAt = System.currentTimeMillis()))
+    }
 
-        val newConversation =
-            Conversation(
-                id = UUID.randomUUID().toString(),
-                title = title,
-                createdAt = System.currentTimeMillis(),
-                updatedAt = System.currentTimeMillis()
-            )
+    override suspend fun toggleArchiveConversation(id: String, isArchived: Boolean) {
+        val existing = conversationDao.getConversationById(id) ?: return
+        conversationDao.update(existing.copy(isArchived = isArchived, updatedAt = System.currentTimeMillis()))
+    }
 
-        _activeConversation.value = newConversation
-        _messages.value = emptyList()
+    override suspend fun deleteConversation(id: String) {
+        messageDao.deleteMessagesForConversation(id)
+        conversationDao.deleteById(id)
+    }
 
-        _conversations.value =
-            (
-                listOf(newConversation) +
-                    _conversations.value.filter {
-                        it.id != newConversation.id
-                    }
-                )
-                .sortedWith(
-                    compareByDescending<Conversation> {
-                        it.isPinned
-                    }.thenByDescending {
-                        it.updatedAt
-                    }
-                )
+    override fun getMessagesForConversation(conversationId: String): Flow<List<MessageEntity>> =
+        messageDao.getMessagesForConversation(conversationId)
 
-        conversationDao?.insertConversation(
-            ConversationEntity.fromDomain(newConversation)
+    override suspend fun deleteMessage(messageId: String) {
+        val msg = messageDao.getMessageById(messageId) ?: return
+        messageDao.delete(msg)
+    }
+
+    private fun isImageGenerationRequest(prompt: String): Boolean {
+        val clean = prompt.trim().lowercase()
+        return clean.startsWith("generate image") ||
+                clean.startsWith("generate an image") ||
+                clean.startsWith("create an image") ||
+                clean.startsWith("create image") ||
+                clean.startsWith("draw ") ||
+                clean.startsWith("make an image of") ||
+                clean.startsWith("paint ") ||
+                clean.contains("generate a picture of") ||
+                clean.contains("create a photo of")
+    }
+
+    private fun needsWebSearch(prompt: String): Boolean {
+        val clean = prompt.trim().lowercase()
+        val keywords = listOf(
+            "latest", "today", "yesterday", "news", "current", "weather",
+            "stock price", "price of", "who won", "score", "schedule",
+            "recent", "upcoming", "live", "search the web", "google for",
+            "who is the current", "what happened in"
         )
-
-        return newConversation
+        return keywords.any { clean.contains(it) }
     }
-
-    override suspend fun selectConversation(
-        conversationId: String
-    ) {
-
-        cancelGeneration()
-        messagesCollectionJob?.cancel()
-
-        val conversation =
-            _conversations.value.find {
-                it.id == conversationId
-            } ?: return
-
-        _activeConversation.value = conversation
-
-        if (conversationDao != null) {
-
-            messagesCollectionJob =
-                scope.launch {
-
-                    conversationDao
-                        .getMessagesForConversation(
-                            conversationId
-                        )
-                        .collect { entities ->
-
-                            _messages.value =
-                                entities.map {
-                                    it.toDomain()
-                                }
-                        }
-                }
-        }
-
-        val localMessages =
-            inMemoryMessages.filter {
-                it.conversationId == conversationId
-            }
-
-        if (localMessages.isNotEmpty()) {
-            _messages.value = localMessages
-        }
-    }
-
-    override suspend fun renameConversation(
-        conversationId: String,
-        newTitle: String
-    ) {
-
-        val title =
-            newTitle.trim()
-
-        if (title.isEmpty()) return
-
-        val now =
-            System.currentTimeMillis()
-
-        _conversations.value =
-            _conversations.value.map {
-                if (it.id == conversationId) {
-                    it.copy(
-                        title = title,
-                        updatedAt = now
-                    )
-                } else {
-                    it
-                }
-            }
-
-        if (
-            _activeConversation.value?.id ==
-            conversationId
-        ) {
-            _activeConversation.value =
-                _activeConversation.value?.copy(
-                    title = title,
-                    updatedAt = now
-                )
-        }
-
-        conversationDao?.updateConversationTitle(
-            conversationId,
-            title,
-            now
-        )
-    }
-
-    override suspend fun togglePinConversation(
-        conversationId: String
-    ) {
-
-        val target =
-            _conversations.value.find {
-                it.id == conversationId
-            } ?: return
-
-        val pinned =
-            !target.isPinned
-
-        _conversations.value =
-            _conversations.value
-                .map {
-                    if (it.id == conversationId) {
-                        it.copy(
-                            isPinned = pinned
-                        )
-                    } else {
-                        it
-                    }
-                }
-                .sortedWith(
-                    compareByDescending<Conversation> {
-                        it.isPinned
-                    }.thenByDescending {
-                        it.updatedAt
-                    }
-                )
-
-        if (
-            _activeConversation.value?.id ==
-            conversationId
-        ) {
-            _activeConversation.value =
-                _activeConversation.value?.copy(
-                    isPinned = pinned
-                )
-        }
-
-        conversationDao?.updateConversationPinned(
-            conversationId,
-            pinned
-        )
-    }
-
-    override suspend fun toggleArchiveConversation(
-        conversationId: String
-    ) {
-
-        val target =
-            _conversations.value.find {
-                it.id == conversationId
-            } ?: return
-
-        val archived =
-            !target.isArchived
-
-        _conversations.value =
-            _conversations.value.map {
-                if (it.id == conversationId) {
-                    it.copy(
-                        isArchived = archived
-                    )
-                } else {
-                    it
-                }
-            }
-
-        if (
-            _activeConversation.value?.id ==
-            conversationId
-        ) {
-            _activeConversation.value =
-                _activeConversation.value?.copy(
-                    isArchived = archived
-                )
-        }
-
-        conversationDao?.updateConversationArchived(
-            conversationId,
-            archived
-        )
-    }
-
-    override suspend fun deleteConversation(
-        conversationId: String
-    ) {
-
-        cancelGeneration()
-
-        _conversations.value =
-            _conversations.value.filter {
-                it.id != conversationId
-            }
-
-        inMemoryMessages.removeAll {
-            it.conversationId == conversationId
-        }
-
-        conversationDao?.deleteConversation(
-            conversationId
-        )
-
-        if (
-            _activeConversation.value?.id ==
-            conversationId
-        ) {
-
-            val remaining =
-                _conversations.value
-
-            if (remaining.isNotEmpty()) {
-                selectConversation(
-                    remaining.first().id
-                )
-            } else {
-                startNewConversation()
-            }
-        }
-    }
-
-    override suspend fun clearMessages() {
-
-        cancelGeneration()
-
-        val conversation =
-            _activeConversation.value ?: return
-
-        _messages.value = emptyList()
-
-        inMemoryMessages.removeAll {
-            it.conversationId == conversation.id
-        }
-
-        conversationDao?.clearMessages(
-            conversation.id
-        )
-    }
-
-    override suspend fun cancelGeneration() {
-
-        activeGenerationJob?.cancel()
-        activeGenerationJob = null
-
-        _isGenerating.value = false
-        _searchPhase.value = SearchPhase.IDLE
-    }
-
-    // ---------------------------------------------------------
-    // MEMORY
-    // ---------------------------------------------------------
-
-    override fun setMemoryEnabled(
-        enabled: Boolean
-    ) {
-
-        memoryPreferences?.setMemoryEnabled(
-            enabled
-        ) ?: run {
-            _isMemoryEnabled.value = enabled
-        }
-    }
-
-    override suspend fun saveMemory(
-        content: String,
-        category: MemoryCategory
-    ): MemoryItem {
-
-        val trimmed =
-            content.trim()
-
-        val now =
-            System.currentTimeMillis()
-
-        val item =
-            MemoryItem(
-                id = UUID.randomUUID().toString(),
-                content = trimmed,
-                category = category,
-                createdAt = now,
-                updatedAt = now,
-                enabled = true
-            )
-
-        _memories.value =
-            listOf(item) +
-                _memories.value.filter {
-                    it.id != item.id
-                }
-
-        memoryDao?.insertMemory(
-            MemoryItemEntity.fromDomain(item)
-        )
-
-        return item
-    }
-
-    override suspend fun toggleMemoryItemEnabled(
-        memoryId: String,
-        enabled: Boolean
-    ) {
-
-        val now =
-            System.currentTimeMillis()
-
-        _memories.value =
-            _memories.value.map {
-                if (it.id == memoryId) {
-                    it.copy(
-                        enabled = enabled,
-                        updatedAt = now
-                    )
-                } else {
-                    it
-                }
-            }
-
-        memoryDao?.updateEnabled(
-            memoryId,
-            enabled,
-            now
-        )
-    }
-
-    override suspend fun deleteMemory(
-        memoryId: String
-    ) {
-
-        _memories.value =
-            _memories.value.filter {
-                it.id != memoryId
-            }
-
-        memoryDao?.deleteMemoryById(
-            memoryId
-        )
-    }
-
-    override suspend fun clearAllMemories() {
-
-        _memories.value = emptyList()
-
-        memoryDao?.clearAllMemories()
-    }
-
-    // ---------------------------------------------------------
-    // SEARCH
-    // ---------------------------------------------------------
-
-    override suspend fun searchConversations(
-        query: String
-    ): List<Conversation> {
-
-        val q =
-            query.trim()
-
-        if (q.isEmpty()) {
-            return _conversations.value
-        }
-
-        val titleMatches =
-            _conversations.value.filter {
-                it.title.contains(
-                    q,
-                    ignoreCase = true
-                )
-            }
-
-        val matchingIds =
-            mutableSetOf<String>()
-
-        if (conversationDao != null) {
-
-            try {
-
-                val messages =
-                    conversationDao.getAllMessages()
-
-                messages
-                    .filter {
-                        it.content.contains(
-                            q,
-                            ignoreCase = true
-                        )
-                    }
-                    .forEach {
-                        matchingIds.add(
-                            it.conversationId
-                        )
-                    }
-
-            } catch (_: Exception) {
-                // Ignore search DB failure.
-            }
-        }
-
-        inMemoryMessages
-            .filter {
-                it.content.contains(
-                    q,
-                    ignoreCase = true
-                )
-            }
-            .forEach {
-                matchingIds.add(
-                    it.conversationId
-                )
-            }
-
-        return (
-            titleMatches +
-                _conversations.value.filter {
-                    it.id in matchingIds
-                }
-            )
-            .distinctBy {
-                it.id
-            }
-            .sortedWith(
-                compareByDescending<Conversation> {
-                    it.isPinned
-                }.thenByDescending {
-                    it.updatedAt
-                }
-            )
-    }
-
-    // ---------------------------------------------------------
-    // SEND MESSAGE
-    // ---------------------------------------------------------
 
     override suspend fun sendMessage(
-        content: String,
-        config: AiModelConfig,
-        attachments: List<Attachment>
-    ): Result<ChatMessage> {
+        conversationId: String,
+        userPrompt: String,
+        attachmentBytes: ByteArray?,
+        attachmentMimeType: String?,
+        attachmentName: String?,
+        attachmentUriString: String?
+    ): Flow<StreamEvent> = flow {
+        val userMessageId = UUID.randomUUID().toString()
+        val assistantMessageId = UUID.randomUUID().toString()
+        val now = System.currentTimeMillis()
 
-        val prompt =
-            content.trim()
-
-        if (
-            prompt.isEmpty() &&
-            attachments.isEmpty()
-        ) {
-            return Result.failure(
-                IllegalArgumentException(
-                    "Message or attachment cannot be empty."
-                )
-            )
-        }
-
-        cancelGeneration()
-
-        _messages.value =
-            _messages.value.filterNot {
-                it.status == MessageStatus.ERROR &&
-                    it.content.isBlank()
-            }
-
-        var conversation =
-            _activeConversation.value
-
-        if (conversation == null) {
-            conversation =
-                startNewConversation()
-        }
-
-        if (
-            conversation.title == "New Chat" &&
-            _messages.value.none {
-                it.conversationId ==
-                    conversation.id
-            }
-        ) {
-
-            val title =
-                when {
-
-                    prompt.isNotEmpty() ->
-                        if (prompt.length > 32) {
-                            prompt.take(29) + "…"
-                        } else {
-                            prompt
-                        }
-
-                    attachments.isNotEmpty() ->
-                        attachments.first().name
-
-                    else ->
-                        "New Chat"
-                }
-
-            val updated =
-                conversation.copy(
-                    title = title,
-                    updatedAt =
-                        System.currentTimeMillis()
-                )
-
-            conversation = updated
-
-            _activeConversation.value =
-                updated
-
-            _conversations.value =
-                _conversations.value
-                    .map {
-                        if (it.id == updated.id) {
-                            updated
-                        } else {
-                            it
-                        }
-                    }
-                    .sortedWith(
-                        compareByDescending<Conversation> {
-                            it.isPinned
-                        }.thenByDescending {
-                            it.updatedAt
-                        }
-                    )
-
-            conversationDao?.insertConversation(
-                ConversationEntity.fromDomain(
-                    updated
-                )
-            )
-        }
-
-        if (
-            _isMemoryEnabled.value &&
-            prompt.isNotEmpty()
-        ) {
-
-            val memory =
-                MemoryDetector.extractMemory(
-                    prompt
-                )
-
-            if (memory != null) {
-                saveMemory(
-                    memory.content,
-                    memory.category
-                )
-            }
-        }
-
-        val userMessage =
-            ChatMessage(
-                id = UUID.randomUUID().toString(),
-                conversationId = conversation.id,
-                role = MessageRole.USER,
-                content = prompt,
-                timestamp = System.currentTimeMillis(),
-                status = MessageStatus.SENT,
-                attachments =
-                    attachments.map {
-                        it.metadata
-                    }
-            )
-
-        inMemoryMessages.add(
-            userMessage
+        // 1. Insert User Message
+        val userMessage = MessageEntity(
+            id = userMessageId,
+            conversationId = conversationId,
+            role = "user",
+            content = userPrompt,
+            timestamp = now,
+            status = "SENT",
+            attachmentUri = attachmentUriString,
+            attachmentMimeType = attachmentMimeType,
+            attachmentName = attachmentName
         )
+        messageDao.insertOrUpdate(userMessage)
 
-        _messages.value =
-            _messages.value + userMessage
-
-        persistMessage(
-            userMessage,
-            conversation
-        )
-
-        lastSentAttachments.clear()
-        lastSentAttachments.addAll(
-            attachments
-        )
-
-        // -----------------------------------------------------
-        // AI IMAGE GENERATION
-        // -----------------------------------------------------
-        //
-        // IMPORTANT:
-        // "show/find/search image" is NOT treated as generation.
-        // Only clear create/draw/generate requests reach the
-        // image-generation model.
-        //
-        if (
-            isImageGenerationRequest(prompt)
-        ) {
-
-            return generateAiImage(
-                conversation = conversation,
-                prompt = prompt
-            )
-        }
-
-        // -----------------------------------------------------
-        // IMAGE SEARCH
-        // -----------------------------------------------------
-
-        val detector =
-            searchIntentDetector as?
-                DefaultSearchIntentDetector
-
-        val isImageQuery =
-            detector?.isImageSearch(prompt) == true
-
-        var retrievedImages =
-            emptyList<RetrievedImageResult>()
-
-        if (isImageQuery) {
-
-            _searchPhase.value =
-                SearchPhase.SEARCHING
-
-            val subject =
-                detector?.extractImageSubject(
-                    prompt
-                ) ?: prompt
-
-            retrievedImages =
-                imageRetrievalService.searchImages(
-                    subject,
-                    maxResults = 2
-                )
-        }
-
-        // -----------------------------------------------------
-        // WEB SEARCH
-        // -----------------------------------------------------
-
-        val decision =
-            searchIntentDetector.detect(
-                query = prompt,
-                mode = config.searchMode,
-                hasAttachments =
-                    attachments.isNotEmpty()
-            )
-
-        val enableSearch =
-            decision.needsSearch ||
-                (
-                    isImageQuery &&
-                        retrievedImages.isEmpty()
-                    )
-
-        return executeAiStreaming(
-            conversation = conversation,
-            prompt = prompt,
-            config = config,
-            attachments = attachments,
-            enableSearch = enableSearch,
-            retrievedImages = retrievedImages
-        )
-    }
-
-    // ---------------------------------------------------------
-    // RETRY
-    // ---------------------------------------------------------
-
-    override suspend fun retryLastFailed(
-        config: AiModelConfig
-    ): Result<ChatMessage> {
-
-        cancelGeneration()
-
-        val current =
-            _messages.value
-
-        val errorIndex =
-            current.indexOfLast {
-                it.status == MessageStatus.ERROR
-            }
-
-        if (errorIndex < 0) {
-            return Result.failure(
-                IllegalStateException(
-                    "No failed message found to retry."
-                )
-            )
-        }
-
-        val userMessage =
-            current
-                .take(errorIndex)
-                .lastOrNull {
-                    it.role == MessageRole.USER &&
-                        it.status == MessageStatus.SENT
-                }
-                ?: return Result.failure(
-                    IllegalStateException(
-                        "No preceding user prompt found."
-                    )
-                )
-
-        _messages.value =
-            current.filterIndexed {
-                index, _ ->
-                index != errorIndex
-            }
-
-        val conversation =
-            _activeConversation.value
-                ?: startNewConversation()
-
-        // -----------------------------------------------------
-        // RETRY IMAGE GENERATION
-        // -----------------------------------------------------
-
-        if (
-            isImageGenerationRequest(
-                userMessage.content
-            )
-        ) {
-
-            return generateAiImage(
-                conversation = conversation,
-                prompt = userMessage.content
-            )
-        }
-
-        // -----------------------------------------------------
-        // RETRY IMAGE SEARCH
-        // -----------------------------------------------------
-
-        val detector =
-            searchIntentDetector as?
-                DefaultSearchIntentDetector
-
-        val isImageQuery =
-            detector?.isImageSearch(
-                userMessage.content
-            ) == true
-
-        var retrievedImages =
-            emptyList<RetrievedImageResult>()
-
-        if (isImageQuery) {
-
-            _searchPhase.value =
-                SearchPhase.SEARCHING
-
-            val subject =
-                detector?.extractImageSubject(
-                    userMessage.content
-                ) ?: userMessage.content
-
-            retrievedImages =
-                imageRetrievalService.searchImages(
-                    subject,
-                    maxResults = 2
-                )
-        }
-
-        val decision =
-            searchIntentDetector.detect(
-                query = userMessage.content,
-                mode = config.searchMode,
-                hasAttachments =
-                    userMessage.attachments.isNotEmpty()
-            )
-
-        val enableSearch =
-            decision.needsSearch ||
-                (
-                    isImageQuery &&
-                        retrievedImages.isEmpty()
-                    )
-
-        val retryAttachments =
-            if (
-                userMessage.attachments.isNotEmpty()
-            ) {
-                lastSentAttachments.toList()
+        // Update conversation title if first message
+        val conv = conversationDao.getConversationById(conversationId)
+        if (conv != null && (conv.title == "New Conversation" || conv.title == "New Chat")) {
+            val autoTitle = if (userPrompt.isNotBlank()) {
+                userPrompt.take(30).trim() + if (userPrompt.length > 30) "..." else ""
+            } else if (!attachmentName.isNullOrBlank()) {
+                attachmentName.take(30)
             } else {
-                emptyList()
+                "Conversation"
             }
+            conversationDao.update(conv.copy(title = autoTitle, updatedAt = now))
+        } else if (conv != null) {
+            conversationDao.update(conv.copy(updatedAt = now))
+        }
 
-        return executeAiStreaming(
-            conversation = conversation,
-            prompt = userMessage.content,
-            config = config,
-            attachments = retryAttachments,
-            enableSearch = enableSearch,
-            retrievedImages = retrievedImages
+        // 2. Check for explicit Image Generation
+        if (isImageGenerationRequest(userPrompt)) {
+            handleImageGeneration(
+                conversationId = conversationId,
+                assistantMessageId = assistantMessageId,
+                userPrompt = userPrompt,
+                collector = this
+            )
+            return@flow
+        }
+
+        // 3. Insert Assistant Placeholder (status: SENDING)
+        val assistantMessage = MessageEntity(
+            id = assistantMessageId,
+            conversationId = conversationId,
+            role = "assistant",
+            content = "",
+            timestamp = now + 1,
+            status = "SENDING"
         )
-    }
+        messageDao.insertOrUpdate(assistantMessage)
 
-    // ---------------------------------------------------------
-    // AI IMAGE GENERATION
-    // ---------------------------------------------------------
+        // 4. Fetch Previous History (excluding current message)
+        val historyMessages = messageDao.getMessagesList(conversationId)
+            .filter { it.id != userMessageId && it.id != assistantMessageId && it.status != "ERROR" }
+            .takeLast(10)
 
-    private suspend fun generateAiImage(
-        conversation: Conversation,
-        prompt: String
-    ): Result<ChatMessage> {
+        // 5. Build Gemini Request
+        val request = buildGeminiRequest(
+            history = historyMessages,
+            currentPrompt = userPrompt,
+            attachmentBytes = attachmentBytes,
+            attachmentMimeType = attachmentMimeType,
+            attachmentName = attachmentName
+        )
 
-        _isGenerating.value = true
-        _searchPhase.value = SearchPhase.GENERATING
+        // 6. Execute Streaming Call with Retry for 429/5xx
+        executeStreamCall(
+            conversationId = conversationId,
+            assistantMessageId = assistantMessageId,
+            request = request,
+            collector = this
+        )
+    }.flowOn(Dispatchers.IO)
 
-        val assistantId =
-            UUID.randomUUID().toString()
+    override suspend fun retryMessage(
+        conversationId: String,
+        failedMessageId: String
+    ): Flow<StreamEvent> = flow {
+        val failedMsg = messageDao.getMessageById(failedMessageId) ?: return@flow
+        val messages = messageDao.getMessagesList(conversationId)
+        val failedIndex = messages.indexOfFirst { it.id == failedMessageId }
+        val userMsg = if (failedIndex > 0) messages[failedIndex - 1] else null
+        val prompt = userMsg?.content ?: "Hello"
+
+        // Mark assistant message as SENDING
+        messageDao.insertOrUpdate(failedMsg.copy(content = "", status = "SENDING"))
+
+        val historyMessages = messages.take(failedIndex - 1).filter { it.status != "ERROR" }.takeLast(10)
+        val request = buildGeminiRequest(
+            history = historyMessages,
+            currentPrompt = prompt,
+            attachmentBytes = null,
+            attachmentMimeType = userMsg?.attachmentMimeType,
+            attachmentName = userMsg?.attachmentName
+        )
+
+        executeStreamCall(
+            conversationId = conversationId,
+            assistantMessageId = failedMessageId,
+            request = request,
+            collector = this
+        )
+    }.flowOn(Dispatchers.IO)
+
+    private suspend fun handleImageGeneration(
+        conversationId: String,
+        assistantMessageId: String,
+        userPrompt: String,
+        collector: kotlinx.coroutines.flow.FlowCollector<StreamEvent>
+    ) {
+        val now = System.currentTimeMillis()
+        val placeholder = MessageEntity(
+            id = assistantMessageId,
+            conversationId = conversationId,
+            role = "assistant",
+            content = "Generating your image...",
+            timestamp = now + 1,
+            status = "SENDING",
+            isGeneratedImage = true
+        )
+        messageDao.insertOrUpdate(placeholder)
 
         try {
+            val cleanSubject = userPrompt
+                .replace(Regex("(?i)^(generate|create|draw|make|paint)\\s+(an?\\s+)?(image|picture|photo)?(\\s+of)?"), "")
+                .trim()
+                .ifBlank { "beautiful scenery" }
 
-            val cleanPrompt =
-                cleanImagePrompt(prompt)
+            val encoded = URLEncoder.encode(cleanSubject, "UTF-8")
+            val imageUrl = "https://image.pollinations.ai/prompt/$encoded?width=1024&height=1024&nologo=true"
+            val textContent = "Here is the image for: **$cleanSubject**"
 
-            val result =
-                imageGenerationService.generateImage(
-                    prompt = cleanPrompt,
-                    aspectRatio = detectAspectRatio(prompt),
-                    imageSize = detectImageSize(prompt)
+            messageDao.insertOrUpdate(
+                placeholder.copy(
+                    content = textContent,
+                    imageUrl = imageUrl,
+                    status = "SENT"
                 )
-
-            if (result.isFailure) {
-
-                val error =
-                    result.exceptionOrNull()
-                        ?: IllegalStateException(
-                            "Image generation failed."
-                        )
-
-                return Result.failure(error)
-            }
-
-            val image =
-                result.getOrThrow()
-
-            if (image.base64Data.isBlank()) {
-                return Result.failure(
-                    IllegalStateException(
-                        "Gemini did not return an image."
-                    )
-                )
-            }
-
-            val finalMessage =
-                ChatMessage(
-                    id = assistantId,
-                    conversationId = conversation.id,
-                    role = MessageRole.ASSISTANT,
-                    content =
-                        image.text
-                            ?.trim()
-                            ?.takeIf {
-                                it.isNotBlank()
-                            }
-                            ?: "Here is the image I created for you.",
-                    timestamp =
-                        System.currentTimeMillis(),
-                    status =
-                        MessageStatus.SENT,
-                    generatedImageBase64 =
-                        image.base64Data,
-                    generatedImageMimeType =
-                        image.mimeType
-                )
-
-            inMemoryMessages.add(
-                finalMessage
             )
 
-            _messages.value =
-                _messages.value + finalMessage
-
-            persistMessage(
-                finalMessage,
-                conversation
-            )
-
-            return Result.success(
-                finalMessage
-            )
-
-        } catch (e: CancellationException) {
-
-            throw e
-
+            collector.emit(StreamEvent.TextChunk(textContent))
+            collector.emit(StreamEvent.Completed(textContent, emptyList()))
         } catch (e: Exception) {
-
-            return Result.failure(e)
-
-        } finally {
-
-            _isGenerating.value = false
-            _searchPhase.value = SearchPhase.IDLE
-            activeGenerationJob = null
+            val errorMsg = "Could not generate image: ${e.message}"
+            messageDao.insertOrUpdate(placeholder.copy(content = errorMsg, status = "ERROR"))
+            collector.emit(StreamEvent.Error(errorMsg, isRetryable = true))
         }
     }
 
-    // ---------------------------------------------------------
-    // REAL AI STREAMING
-    // ---------------------------------------------------------
+    private fun buildGeminiRequest(
+        history: List<MessageEntity>,
+        currentPrompt: String,
+        attachmentBytes: ByteArray?,
+        attachmentMimeType: String?,
+        attachmentName: String?
+    ): GenerateContentRequest {
+        val contents = mutableListOf<Content>()
 
-    private suspend fun executeAiStreaming(
-        conversation: Conversation,
-        prompt: String,
-        config: AiModelConfig,
-        attachments: List<Attachment> = emptyList(),
-        enableSearch: Boolean = false,
-        retrievedImages: List<RetrievedImageResult> =
-            emptyList()
-    ): Result<ChatMessage> = coroutineScope {
-
-        _isGenerating.value = true
-
-        _searchPhase.value =
-            if (enableSearch) {
-                SearchPhase.SEARCHING
-            } else {
-                SearchPhase.IDLE
-            }
-
-        val assistantId =
-            UUID.randomUUID().toString()
-
-        val text =
-            StringBuilder()
-
-        val sources =
-            mutableListOf<SearchSource>()
-
-        var assistantVisible =
-            false
-
-        var completedMessage:
-            ChatMessage? = null
-
-        var failure:
-            Throwable? = null
-
-        retrievedImages.forEach { image ->
-
-            if (
-                sources.none {
-                    it.url == image.sourceUrl
-                }
-            ) {
-
-                sources.add(
-                    SearchSource(
-                        title =
-                            "${image.title} (Wikimedia Commons)",
-                        url =
-                            image.sourceUrl,
-                        snippet =
-                            "Public image retrieved from ${image.attribution}"
-                    )
-                )
+        // Add history
+        for (msg in history) {
+            val role = if (msg.role == "user") "user" else "model"
+            if (msg.content.isNotBlank()) {
+                contents.add(Content(role = role, parts = listOf(Part(text = msg.content))))
             }
         }
 
-        activeGenerationJob =
-            coroutineContext[Job]
+        // Build current user message parts
+        val currentParts = mutableListOf<Part>()
+        var textContent = currentPrompt
 
-        try {
+        if (attachmentBytes != null && attachmentMimeType != null) {
+            if (attachmentMimeType.startsWith("image/")) {
+                val base64Data = Base64.encodeToString(attachmentBytes, Base64.NO_WRAP)
+                currentParts.add(Part(inlineData = InlineData(mimeType = attachmentMimeType, data = base64Data)))
+            } else if (attachmentMimeType == "application/pdf") {
+                val base64Data = Base64.encodeToString(attachmentBytes, Base64.NO_WRAP)
+                currentParts.add(Part(inlineData = InlineData(mimeType = "application/pdf", data = base64Data)))
+            } else if (attachmentMimeType.startsWith("text/") ||
+                attachmentMimeType.contains("json") ||
+                attachmentMimeType.contains("csv") ||
+                attachmentMimeType.contains("markdown")
+            ) {
+                val fileText = String(attachmentBytes, Charsets.UTF_8)
+                val header = if (!attachmentName.isNullOrBlank()) "--- Attached File: $attachmentName ---\n" else ""
+                textContent = "$header$fileText\n\n$currentPrompt"
+            }
+        }
 
-            val history =
-                _messages.value
-                    .filter {
-                        it.conversationId ==
-                            conversation.id
-                    }
-                    .filter {
-                        it.status != MessageStatus.ERROR
-                    }
-                    .filter {
-                        it.content.isNotBlank()
-                    }
-                    .takeLast(20)
+        if (textContent.isNotBlank()) {
+            currentParts.add(Part(text = textContent))
+        } else if (currentParts.isEmpty()) {
+            currentParts.add(Part(text = "Hello!"))
+        }
 
-            val effectiveConfig =
-                if (_isMemoryEnabled.value) {
+        contents.add(Content(role = "user", parts = currentParts))
 
-                    val memories =
-                        _memories.value.filter {
-                            it.enabled
-                        }
+        // Web search tools if query requires current info
+        val tools: List<JsonObject>? = if (needsWebSearch(currentPrompt)) {
+            listOf(buildJsonObject { putJsonObject("googleSearch") {} })
+        } else {
+            null
+        }
 
-                    if (memories.isNotEmpty()) {
+        return GenerateContentRequest(
+            contents = contents,
+            generationConfig = GenerationConfig(
+                temperature = 0.7f,
+                topP = 0.95f,
+                thinkingConfig = ThinkingConfig(thinkingLevel = "low")
+            ),
+            tools = tools,
+            systemInstruction = Content(parts = listOf(Part(text = SYSTEM_PROMPT)))
+        )
+    }
 
-                        val context =
-                            buildMemoryContext(
-                                memories,
-                                prompt
-                            )
+    private suspend fun executeStreamCall(
+        conversationId: String,
+        assistantMessageId: String,
+        request: GenerateContentRequest,
+        collector: kotlinx.coroutines.flow.FlowCollector<StreamEvent>
+    ) {
+        val apiKey = BuildConfig.GEMINI_API_KEY
+        val fullTextBuilder = StringBuilder()
+        val discoveredSources = mutableListOf<WebSourceCitation>()
 
-                        config.copy(
-                            systemPrompt =
-                                if (
-                                    config.systemPrompt
-                                        .isNotBlank()
-                                ) {
-                                    config.systemPrompt +
-                                        "\n\n" +
-                                        context
-                                } else {
-                                    context
-                                }
+        var maxAttempts = 3
+        var currentAttempt = 0
+        var backoffMs = 1000L
+        var success = false
+        var lastErrorMessage = ""
+
+        while (currentAttempt < maxAttempts && !success) {
+            currentAttempt++
+            try {
+                if (apiKey.isBlank()) {
+                    // Fallback demo response if no API key is configured yet
+                    val demoResponse = "Mayra AI is ready! Please configure your GEMINI_API_KEY in the Secrets panel to enable full real-time intelligence.\n\n" +
+                            "I can assist you with code, reasoning, multimodal analysis, and multilingual queries in Bengali, Hindi, English, and more!"
+                    messageDao.insertOrUpdate(
+                        MessageEntity(
+                            id = assistantMessageId,
+                            conversationId = conversationId,
+                            role = "assistant",
+                            content = demoResponse,
+                            timestamp = System.currentTimeMillis(),
+                            status = "SENT"
                         )
-
-                    } else {
-                        config
-                    }
-
-                } else {
-                    config
-                }
-
-            val imageInstructions =
-                if (
-                    retrievedImages.isNotEmpty()
-                ) {
-
-                    val imageContext =
-                        retrievedImages.joinToString(
-                            "\n"
-                        ) { image ->
-
-                            "- Title: ${image.title}, " +
-                                "Image URL: ${image.imageUrl}, " +
-                                "Source: ${image.sourceUrl}"
-                        }
-
-                    """
-
-[RETRIEVED IMAGES]
-
-$imageContext
-
-Rules:
-- Show the retrieved image using markdown when appropriate.
-- Never claim that a retrieved image was AI-generated.
-- Clearly identify it as a web/public image.
-- Keep the source link.
-""".trimIndent()
-
-                } else if (
-                    isImageRequest(prompt)
-                ) {
-
-                    """
-
-[IMAGE RETRIEVAL]
-
-No suitable free public image was found.
-Do not invent an image URL.
-Do not pretend that an image was generated.
-""".trimIndent()
-
-                } else {
-                    ""
-                }
-
-            val finalConfig =
-                if (
-                    imageInstructions.isNotBlank()
-                ) {
-                    effectiveConfig.copy(
-                        systemPrompt =
-                            effectiveConfig.systemPrompt +
-                                "\n\n" +
-                                imageInstructions
                     )
-                } else {
-                    effectiveConfig
+                    collector.emit(StreamEvent.TextChunk(demoResponse))
+                    collector.emit(StreamEvent.Completed(demoResponse, emptyList()))
+                    return
                 }
 
-            aiService
-                .generateStream(
-                    conversationId =
-                        conversation.id,
-                    prompt = prompt,
-                    history = history,
-                    config = finalConfig,
-                    attachments = attachments,
-                    enableSearch = enableSearch
+                val responseBody = geminiService.streamGenerateContent(
+                    model = PRIMARY_MODEL,
+                    apiKey = apiKey,
+                    request = request
                 )
-                .collect { chunk ->
 
-                    if (chunk.isSearching) {
-                        _searchPhase.value =
-                            SearchPhase.SEARCHING
-                    }
+                responseBody.byteStream().bufferedReader().use { reader ->
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) {
+                        val rawLine = line?.trim() ?: continue
+                        if (!rawLine.startsWith("data:")) continue
+                        val jsonPayload = rawLine.removePrefix("data:").trim()
+                        if (jsonPayload.isEmpty() || jsonPayload == "[DONE]") continue
 
-                    if (
-                        chunk.searchQueries.isNotEmpty() ||
-                        chunk.searchSources.isNotEmpty()
-                    ) {
-                        _searchPhase.value =
-                            SearchPhase.READING_SOURCES
-                    }
+                        try {
+                            val candidate = RetrofitClient.json.decodeFromString<CandidateContainer>(jsonPayload)
+                            val firstCandidate = candidate.candidates?.firstOrNull()
 
-                    chunk.searchSources.forEach { source ->
+                            // Extract text part
+                            val partText = firstCandidate?.content?.parts?.firstOrNull()?.text
+                            if (!partText.isNullOrEmpty()) {
+                                fullTextBuilder.append(partText)
+                                collector.emit(StreamEvent.TextChunk(partText))
 
-                        if (
-                            sources.none {
-                                it.url == source.url
-                            }
-                        ) {
-                            sources.add(source)
-                        }
-                    }
-
-                    if (
-                        !chunk.isComplete &&
-                        chunk.textDelta.isNotEmpty()
-                    ) {
-
-                        _searchPhase.value =
-                            SearchPhase.GENERATING
-
-                        text.append(
-                            chunk.textDelta
-                        )
-
-                        val current =
-                            text.toString()
-
-                        if (!assistantVisible) {
-
-                            assistantVisible = true
-
-                            val message =
-                                ChatMessage(
-                                    id = assistantId,
-                                    conversationId =
-                                        conversation.id,
-                                    role =
-                                        MessageRole.ASSISTANT,
-                                    content = current,
-                                    timestamp =
-                                        System.currentTimeMillis(),
-                                    status =
-                                        MessageStatus.SENDING,
-                                    searchSources =
-                                        sources.toList()
+                                // Periodically update partial text in Room
+                                messageDao.insertOrUpdate(
+                                    MessageEntity(
+                                        id = assistantMessageId,
+                                        conversationId = conversationId,
+                                        role = "assistant",
+                                        content = fullTextBuilder.toString(),
+                                        timestamp = System.currentTimeMillis(),
+                                        status = "SENDING"
+                                    )
                                 )
+                            }
 
-                            _messages.value =
-                                _messages.value +
-                                    message
-
-                        } else {
-
-                            _messages.value =
-                                _messages.value.map {
-                                    if (
-                                        it.id ==
-                                            assistantId
-                                    ) {
-                                        it.copy(
-                                            content =
-                                                current,
-                                            searchSources =
-                                                sources.toList()
-                                        )
-                                    } else {
-                                        it
+                            // Extract grounding sources
+                            val chunks = firstCandidate?.groundingMetadata?.groundingChunks
+                            if (chunks != null) {
+                                for (chunk in chunks) {
+                                    val uri = chunk.web?.uri
+                                    val title = chunk.web?.title ?: uri
+                                    if (!uri.isNullOrBlank() && !title.isNullOrBlank()) {
+                                        val citation = WebSourceCitation(title = title, url = uri)
+                                        if (discoveredSources.none { it.url == uri }) {
+                                            discoveredSources.add(citation)
+                                        }
                                     }
                                 }
-                        }
-                    }
-
-                    if (chunk.isComplete) {
-
-                        _searchPhase.value =
-                            SearchPhase.IDLE
-
-                        var finalContent =
-                            text.toString().trim()
-
-                        if (
-                            retrievedImages.isNotEmpty() &&
-                            !finalContent.contains(
-                                "!["
-                            )
-                        ) {
-
-                            val appendix =
-                                buildString {
-
-                                    append("\n\n")
-
-                                    retrievedImages
-                                        .forEach { image ->
-
-                                            append(
-                                                "![${image.title}](" +
-                                                    "${image.imageUrl})\n"
-                                            )
-
-                                            append(
-                                                "*Public image from " +
-                                                    "${image.attribution} • " +
-                                                    "[View source](" +
-                                                    "${image.sourceUrl})*\n\n"
-                                            )
-                                        }
-                                }
-
-                            finalContent =
-                                (
-                                    finalContent +
-                                        appendix
-                                    ).trim()
-                        }
-
-                        if (finalContent.isBlank()) {
-                            throw IllegalStateException(
-                                "Mayra AI returned an empty response."
-                            )
-                        }
-
-                        val finalMessage =
-                            ChatMessage(
-                                id = assistantId,
-                                conversationId =
-                                    conversation.id,
-                                role =
-                                    MessageRole.ASSISTANT,
-                                content =
-                                    finalContent,
-                                timestamp =
-                                    System.currentTimeMillis(),
-                                status =
-                                    MessageStatus.SENT,
-                                searchSources =
-                                    sources.toList()
-                            )
-
-                        completedMessage =
-                            finalMessage
-
-                        inMemoryMessages.add(
-                            finalMessage
-                        )
-
-                        _messages.value =
-                            _messages.value.map {
-                                if (
-                                    it.id ==
-                                        assistantId
-                                ) {
-                                    finalMessage
-                                } else {
-                                    it
+                                if (discoveredSources.isNotEmpty()) {
+                                    collector.emit(StreamEvent.SourcesDiscovered(discoveredSources))
                                 }
                             }
-
-                        persistMessage(
-                            finalMessage,
-                            conversation
-                        )
+                        } catch (parseEx: Exception) {
+                            // Non-fatal chunk parsing error, continue reading next stream lines
+                        }
                     }
                 }
 
-        } catch (e: CancellationException) {
-
-            _messages.value =
-                _messages.value.filter {
-                    it.id != assistantId
+                val finalText = fullTextBuilder.toString().ifBlank {
+                    "I received your request but didn't generate any text. Please try again."
                 }
 
-            throw e
+                val sourcesJson = if (discoveredSources.isNotEmpty()) {
+                    RetrofitClient.json.encodeToString(discoveredSources)
+                } else null
 
-        } catch (e: Exception) {
-
-            failure = e
-
-            _messages.value =
-                _messages.value.filter {
-                    it.id != assistantId
-                }
-
-        } finally {
-
-            _isGenerating.value = false
-            _searchPhase.value = SearchPhase.IDLE
-            activeGenerationJob = null
-        }
-
-        if (failure != null) {
-
-            Result.failure(
-                failure!!
-            )
-
-        } else {
-
-            completedMessage?.let {
-                Result.success(it)
-            } ?: Result.failure(
-                IllegalStateException(
-                    "No response was created."
-                )
-            )
-        }
-    }
-
-    // ---------------------------------------------------------
-    // IMAGE REQUEST DETECTION
-    // ---------------------------------------------------------
-
-    private fun isImageGenerationRequest(
-        prompt: String
-    ): Boolean {
-
-        val p =
-            prompt
-                .lowercase(Locale.ROOT)
-                .trim()
-
-        val generationWords =
-            listOf(
-                "generate an image",
-                "generate a picture",
-                "generate image",
-                "generate picture",
-                "create an image",
-                "create a picture",
-                "create image",
-                "create picture",
-                "make an image",
-                "make a picture",
-                "make image",
-                "make picture",
-                "draw an image",
-                "draw a picture",
-                "draw image",
-                "draw picture",
-                "ai image",
-                "ai generated image",
-                "generate a photo",
-                "create a photo",
-                "make a photo",
-                "edit this image",
-                "edit this photo",
-                "modify this image",
-                "modify this photo",
-                "change this image",
-                "change this photo"
-            )
-
-        val bengaliWords =
-            listOf(
-                "ছবি তৈরি কর",
-                "ছবি বানাও",
-                "ছবি বানিয়ে দাও",
-                "ছবি তৈরি করে দাও",
-                "একটা ছবি বানাও",
-                "একটি ছবি বানাও",
-                "ছবি আঁকো",
-                "ছবি এডিট কর",
-                "ছবি এডিট করে দাও",
-                "ছবিটা এডিট কর",
-                "ফটো এডিট কর",
-                "ফটো বানাও",
-                "ছবি তৈরি"
-            )
-
-        val hindiWords =
-            listOf(
-                "छवि बनाओ",
-                "तस्वीर बनाओ",
-                "फोटो बनाओ",
-                "चित्र बनाओ",
-                "इमेज बनाओ",
-                "इमेज बनाकर दो",
-                "फोटो एडिट करो",
-                "तस्वीर एडिट करो",
-                "इमेज एडिट करो"
-            )
-
-        return generationWords.any {
-            p.contains(it)
-        } ||
-            bengaliWords.any {
-                prompt.contains(it)
-            } ||
-            hindiWords.any {
-                prompt.contains(it)
-            }
-    }
-
-    private fun cleanImagePrompt(
-        prompt: String
-    ): String {
-
-        val cleaned =
-            prompt
-                .trim()
-                .removePrefix("/")
-                .trim()
-
-        return """
-Create the requested image.
-
-User request:
-$cleaned
-
-Requirements:
-- Follow the user's visual description accurately.
-- Produce a polished high-quality image.
-- Do not add unnecessary text, logos, or watermarks unless requested.
-- Preserve requested people, objects, environment, composition, colors, lighting and style.
-""".trimIndent()
-    }
-
-    private fun detectAspectRatio(
-        prompt: String
-    ): String {
-
-        val p =
-            prompt.lowercase(Locale.ROOT)
-
-        return when {
-
-            p.contains("16:9") ||
-                p.contains("landscape") ||
-                p.contains("wide") ->
-                "16:9"
-
-            p.contains("9:16") ||
-                p.contains("portrait") ||
-                p.contains("vertical") ->
-                "9:16"
-
-            p.contains("4:3") ->
-                "4:3"
-
-            p.contains("3:4") ->
-                "3:4"
-
-            p.contains("3:2") ->
-                "3:2"
-
-            p.contains("2:3") ->
-                "2:3"
-
-            else ->
-                "1:1"
-        }
-    }
-
-    private fun detectImageSize(
-        prompt: String
-    ): String {
-
-        val p =
-            prompt.lowercase(Locale.ROOT)
-
-        return when {
-
-            p.contains("4k") ||
-                p.contains("4 k") ->
-                "4K"
-
-            p.contains("2k") ||
-                p.contains("2 k") ->
-                "2K"
-
-            else ->
-                "1K"
-        }
-    }
-
-    // ---------------------------------------------------------
-    // GENERAL IMAGE DETECTION
-    // ---------------------------------------------------------
-
-    private fun isImageRequest(
-        prompt: String
-    ): Boolean {
-
-        return (
-            prompt.contains(
-                "image",
-                ignoreCase = true
-            ) ||
-                prompt.contains(
-                    "photo",
-                    ignoreCase = true
-                ) ||
-                prompt.contains(
-                    "picture",
-                    ignoreCase = true
-                ) ||
-                prompt.contains(
-                    "ছবি"
-                ) ||
-                prompt.contains(
-                    "ফটো"
-                ) ||
-                prompt.contains(
-                    "चित्र"
-                )
-            )
-    }
-
-    // ---------------------------------------------------------
-    // MEMORY
-    // ---------------------------------------------------------
-
-    private fun buildMemoryContext(
-        memories: List<MemoryItem>,
-        prompt: String
-    ): String {
-
-        val relevant =
-            selectRelevantMemories(
-                memories,
-                prompt
-            )
-
-        val builder =
-            StringBuilder(
-                "[User Profile & Context Memories]:\n"
-            )
-
-        relevant.forEach { memory ->
-
-            builder.append(
-                "- [${memory.category.displayName}]: " +
-                    "${memory.content}\n"
-            )
-        }
-
-        builder.append(
-            "Apply these memories only when relevant."
-        )
-
-        return builder.toString()
-    }
-
-    private fun selectRelevantMemories(
-        memories: List<MemoryItem>,
-        prompt: String,
-        maxCount: Int = 10
-    ): List<MemoryItem> {
-
-        if (memories.size <= maxCount) {
-            return memories
-        }
-
-        val words =
-            prompt
-                .lowercase(Locale.ROOT)
-                .split(Regex("\\s+"))
-                .filter {
-                    it.length > 2
-                }
-
-        return memories
-            .sortedByDescending { memory ->
-
-                val lower =
-                    memory.content
-                        .lowercase(Locale.ROOT)
-
-                var score = 0
-
-                words.forEach { word ->
-
-                    if (
-                        lower.contains(word)
-                    ) {
-                        score += 2
-                    }
-                }
-
-                if (
-                    memory.category ==
-                        MemoryCategory.PREFERENCE ||
-                    memory.category ==
-                        MemoryCategory.INSTRUCTION
-                ) {
-                    score += 1
-                }
-
-                score
-            }
-            .take(maxCount)
-    }
-
-    // ---------------------------------------------------------
-    // PERSIST MESSAGE
-    // ---------------------------------------------------------
-
-    private suspend fun persistMessage(
-        message: ChatMessage,
-        conversation: Conversation
-    ) {
-
-        val dao =
-            conversationDao
-                ?: return
-
-        try {
-
-            if (
-                dao.getConversationById(
-                    conversation.id
-                ) == null
-            ) {
-                dao.insertConversation(
-                    ConversationEntity.fromDomain(
-                        conversation
+                // Final update with status SENT
+                messageDao.insertOrUpdate(
+                    MessageEntity(
+                        id = assistantMessageId,
+                        conversationId = conversationId,
+                        role = "assistant",
+                        content = finalText,
+                        timestamp = System.currentTimeMillis(),
+                        status = "SENT",
+                        sourcesJson = sourcesJson
                     )
                 )
-            }
 
-            val preview =
-                if (message.content.length > 50) {
-                    message.content.take(47) + "…"
+                collector.emit(StreamEvent.Completed(finalText, discoveredSources))
+                success = true
+                return
+
+            } catch (httpEx: HttpException) {
+                val code = httpEx.code()
+                lastErrorMessage = "API error ($code): ${httpEx.message()}"
+                // Retry only 429 and 5xx
+                if (code == 429 || code >= 500) {
+                    if (currentAttempt < maxAttempts) {
+                        delay(backoffMs)
+                        backoffMs *= 2
+                        continue
+                    }
                 } else {
-                    message.content
+                    // Do not retry 400, 401, 403, 404
+                    break
                 }
-
-            dao.saveMessageAndUpdateConversation(
-                ChatMessageEntity.fromDomain(
-                    message
-                ),
-                updatedAt =
-                    System.currentTimeMillis(),
-                preview = preview
-            )
-
-        } catch (_: Exception) {
-            // Database failure must never stop AI.
+            } catch (ioEx: IOException) {
+                lastErrorMessage = "Network connection failed. Please check your internet connection."
+                if (currentAttempt < maxAttempts) {
+                    delay(backoffMs)
+                    backoffMs *= 2
+                    continue
+                }
+            } catch (e: Exception) {
+                lastErrorMessage = e.message ?: "An unexpected error occurred."
+                break
+            }
         }
+
+        // On failure: update Room status to ERROR and emit Error event
+        val fallbackText = fullTextBuilder.toString()
+        val errorText = if (fallbackText.isNotBlank()) {
+            "$fallbackText\n\n⚠️ $lastErrorMessage"
+        } else {
+            "⚠️ $lastErrorMessage"
+        }
+
+        messageDao.insertOrUpdate(
+            MessageEntity(
+                id = assistantMessageId,
+                conversationId = conversationId,
+                role = "assistant",
+                content = errorText,
+                timestamp = System.currentTimeMillis(),
+                status = "ERROR"
+            )
+        )
+
+        collector.emit(StreamEvent.Error(lastErrorMessage, isRetryable = true))
     }
 }
+
+@kotlinx.serialization.Serializable
+private data class CandidateContainer(
+    val candidates: List<Candidate>? = null
+)
