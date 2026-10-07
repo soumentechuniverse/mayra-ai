@@ -14,5 +14,8 @@ data class ChatUiState(
     val attachedFile: AttachmentInfo? = null,
     val isGenerating: Boolean = false,
     val isThinking: Boolean = false,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+
+    // Settings
+    val isSettingsOpen: Boolean = false
 )
