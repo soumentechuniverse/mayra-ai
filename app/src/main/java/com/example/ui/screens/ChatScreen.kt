@@ -19,6 +19,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -36,8 +39,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,6 +50,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.service.AppUpdateInfo
+import com.example.data.service.AppUpdateService
 import com.example.ui.components.ChatInputBar
 import com.example.ui.components.ChatMessageItem
 import com.example.ui.components.HistoryDrawer
@@ -71,10 +78,13 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    /*
-     * Keep the newest assistant output visible while streaming.
-     * This gives the chat a natural live-response experience.
-     */
+    var isSettingsOpen by remember { mutableStateOf(false) }
+    var isCheckingUpdate by remember { mutableStateOf(false) }
+    var updateInfo by remember { mutableStateOf<AppUpdateInfo?>(null) }
+    var updateError by remember { mutableStateOf<String?>(null) }
+
+    val updateService = remember { AppUpdateService() }
+
     LaunchedEffect(
         uiState.messages.size,
         uiState.messages.lastOrNull()?.content
@@ -206,6 +216,19 @@ fun ChatScreen(
 
                         IconButton(
                             onClick = {
+                                isSettingsOpen = true
+                            },
+                            modifier = Modifier.testTag("settings_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Settings",
+                                tint = MayraCyan
+                            )
+                        }
+
+                        IconButton(
+                            onClick = {
                                 viewModel.newChat()
                             },
                             modifier = Modifier.testTag("top_new_chat_button")
@@ -269,6 +292,7 @@ fun ChatScreen(
             },
 
             containerColor = MayraDarkBackground
+
         ) { paddingValues ->
 
             Box(
@@ -281,11 +305,9 @@ fun ChatScreen(
 
                     WelcomeScreen(
                         onSelectPrompt = { prompt ->
-
                             viewModel.onInputTextChanged(prompt)
                             viewModel.sendMessage()
                         },
-
                         modifier = Modifier.fillMaxSize()
                     )
 
@@ -318,10 +340,6 @@ fun ChatScreen(
                             )
                         }
 
-                        /*
-                         * Only show the thinking indicator when there
-                         * isn't already a streaming message.
-                         */
                         if (
                             uiState.isThinking &&
                             uiState.messages.none {
@@ -345,5 +363,164 @@ fun ChatScreen(
                 }
             }
         }
+    }
+
+    /*
+     * SETTINGS DIALOG
+     */
+    if (isSettingsOpen) {
+
+        AlertDialog(
+            onDismissRequest = {
+                if (!isCheckingUpdate) {
+                    isSettingsOpen = false
+                }
+            },
+
+            title = {
+                Text(
+                    text = "Settings",
+                    fontWeight = FontWeight.Bold
+                )
+            },
+
+            text = {
+
+                Column {
+
+                    Text(
+                        text = "Mayra AI",
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 16.sp
+                    )
+
+                    Spacer(
+                        modifier = Modifier.size(8.dp)
+                    )
+
+                    Text(
+                        text = "App version: ${updateInfo?.currentVersion ?: "1.0.1"}",
+                        fontSize = 14.sp
+                    )
+
+                    Spacer(
+                        modifier = Modifier.size(16.dp)
+                    )
+
+                    Text(
+                        text = when {
+                            isCheckingUpdate ->
+                                "Checking for updates..."
+
+                            updateError != null ->
+                                updateError!!
+
+                            updateInfo?.isUpdateAvailable == true ->
+                                "New version available: ${updateInfo?.latestVersion}"
+
+                            updateInfo != null ->
+                                "You are using the latest version."
+
+                            else ->
+                                "Check whether a newer version of Mayra AI is available."
+                        },
+                        fontSize = 14.sp
+                    )
+
+                    if (
+                        updateInfo?.isUpdateAvailable == true &&
+                        updateInfo?.releaseNotes?.isNotBlank() == true
+                    ) {
+
+                        Spacer(
+                            modifier = Modifier.size(12.dp)
+                        )
+
+                        Text(
+                            text = updateInfo?.releaseNotes ?: "",
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+            },
+
+            confirmButton = {
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+
+                    if (
+                        updateInfo?.isUpdateAvailable == true &&
+                        updateInfo?.downloadUrl?.isNotBlank() == true
+                    ) {
+
+                        Button(
+                            onClick = {
+                                updateInfo?.let { info ->
+                                    updateService.openDownloadUrl(
+                                        context = androidx.compose.ui.platform.LocalContext.current,
+                                        downloadUrl = info.downloadUrl
+                                    )
+                                }
+                            },
+                            enabled = !isCheckingUpdate
+                        ) {
+                            Text("Update")
+                        }
+
+                        Spacer(
+                            modifier = Modifier.width(8.dp)
+                        )
+                    }
+
+                    Button(
+                        onClick = {
+
+                            isCheckingUpdate = true
+                            updateError = null
+
+                            scope.launch {
+
+                                val result =
+                                    updateService.checkForUpdate()
+
+                                result
+                                    .onSuccess { info ->
+                                        updateInfo = info
+                                    }
+                                    .onFailure { error ->
+                                        updateError =
+                                            error.message
+                                                ?: "Unable to check for updates."
+                                    }
+
+                                isCheckingUpdate = false
+                            }
+                        },
+                        enabled = !isCheckingUpdate
+                    ) {
+                        Text(
+                            if (isCheckingUpdate)
+                                "Checking..."
+                            else
+                                "Check for Update"
+                        )
+                    }
+                }
+            },
+
+            dismissButton = {
+
+                Button(
+                    onClick = {
+                        isSettingsOpen = false
+                    },
+                    enabled = !isCheckingUpdate
+                ) {
+                    Text("Close")
+                }
+            }
+        )
     }
 }
