@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -51,12 +52,9 @@ import com.example.ui.components.ThinkingIndicator
 import com.example.ui.components.WelcomeScreen
 import com.example.ui.theme.MayraCyan
 import com.example.ui.theme.MayraDarkBackground
-import com.example.ui.theme.MayraDarkBorder
 import com.example.ui.theme.MayraDarkSurface
 import com.example.ui.theme.MayraIndigo
-import com.example.ui.theme.MayraTextMuted
 import com.example.ui.theme.MayraTextPrimary
-import com.example.ui.theme.MayraTextSecondary
 import com.example.ui.viewmodel.ChatViewModel
 import kotlinx.coroutines.launch
 
@@ -67,13 +65,20 @@ fun ChatScreen(
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Scroll to bottom when messages change or stream updates
-    LaunchedEffect(uiState.messages.size, uiState.messages.lastOrNull()?.content) {
+    /*
+     * Keep the newest assistant output visible while streaming.
+     * This gives the chat a natural live-response experience.
+     */
+    LaunchedEffect(
+        uiState.messages.size,
+        uiState.messages.lastOrNull()?.content
+    ) {
         if (uiState.messages.isNotEmpty()) {
             listState.animateScrollToItem(uiState.messages.lastIndex)
         }
@@ -95,23 +100,33 @@ fun ChatScreen(
                     conversations = uiState.conversations,
                     archivedConversations = uiState.archivedConversations,
                     selectedConversationId = uiState.currentConversationId,
+
                     onSelectConversation = { id ->
                         viewModel.selectConversation(id)
-                        scope.launch { drawerState.close() }
+                        scope.launch {
+                            drawerState.close()
+                        }
                     },
+
                     onNewChat = {
                         viewModel.newChat()
-                        scope.launch { drawerState.close() }
+                        scope.launch {
+                            drawerState.close()
+                        }
                     },
+
                     onRenameConversation = { id, title ->
                         viewModel.renameConversation(id, title)
                     },
+
                     onTogglePin = { id, pin ->
                         viewModel.togglePinConversation(id, pin)
                     },
-                    onToggleArchive = { id, arc ->
-                        viewModel.toggleArchiveConversation(id, arc)
+
+                    onToggleArchive = { id, archived ->
+                        viewModel.toggleArchiveConversation(id, archived)
                     },
+
                     onDeleteConversation = { id ->
                         viewModel.deleteConversation(id)
                     }
@@ -119,27 +134,56 @@ fun ChatScreen(
             }
         }
     ) {
+
         Scaffold(
+            modifier = modifier.fillMaxSize(),
+
             topBar = {
                 TopAppBar(
+
+                    navigationIcon = {
+                        IconButton(
+                            onClick = {
+                                scope.launch {
+                                    drawerState.open()
+                                }
+                            },
+                            modifier = Modifier.testTag("menu_drawer_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Menu,
+                                contentDescription = "Chat history",
+                                tint = MayraTextPrimary
+                            )
+                        }
+                    },
+
                     title = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+
                             Box(
                                 modifier = Modifier
-                                    .size(28.dp)
+                                    .size(32.dp)
                                     .clip(CircleShape)
                                     .background(MayraIndigo),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.AutoAwesome,
-                                    contentDescription = null,
+                                    contentDescription = "Mayra",
                                     tint = MayraCyan,
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
-                            Spacer(modifier = Modifier.width(8.dp))
+
+                            Spacer(
+                                modifier = Modifier.width(10.dp)
+                            )
+
                             Column {
+
                                 Text(
                                     text = uiState.currentConversationTitle,
                                     color = MayraTextPrimary,
@@ -147,29 +191,23 @@ fun ChatScreen(
                                     fontWeight = FontWeight.SemiBold,
                                     maxLines = 1
                                 )
+
                                 Text(
-                                    text = "Mayra AI • Gemini 3.8 Flash",
+                                    text = "Mayra AI",
                                     color = MayraCyan,
-                                    fontSize = 11.sp
+                                    fontSize = 11.sp,
+                                    maxLines = 1
                                 )
                             }
                         }
                     },
-                    navigationIcon = {
-                        IconButton(
-                            onClick = { scope.launch { drawerState.open() } },
-                            modifier = Modifier.testTag("menu_drawer_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Menu,
-                                contentDescription = "Open Chat History",
-                                tint = MayraTextPrimary
-                            )
-                        }
-                    },
+
                     actions = {
+
                         IconButton(
-                            onClick = { viewModel.newChat() },
+                            onClick = {
+                                viewModel.newChat()
+                            },
                             modifier = Modifier.testTag("top_new_chat_button")
                         ) {
                             Icon(
@@ -179,57 +217,126 @@ fun ChatScreen(
                             )
                         }
                     },
+
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = MayraDarkSurface
                     )
                 )
             },
+
             bottomBar = {
-                ChatInputBar(
-                    inputText = uiState.inputText,
-                    onInputTextChanged = { viewModel.onInputTextChanged(it) },
-                    onSendMessage = { viewModel.sendMessage() },
-                    onStopGeneration = { viewModel.stopGeneration() },
-                    isGenerating = uiState.isGenerating,
-                    attachedFile = uiState.attachedFile,
-                    onAttachmentSelected = { viewModel.onAttachmentSelected(it) },
-                    speechRecognizerHelper = viewModel.speechRecognizerHelper
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MayraDarkBackground)
+                        .navigationBarsPadding()
+                ) {
+
+                    ChatInputBar(
+                        inputText = uiState.inputText,
+
+                        onInputTextChanged = {
+                            viewModel.onInputTextChanged(it)
+                        },
+
+                        onSendMessage = {
+                            viewModel.sendMessage()
+                        },
+
+                        onStopGeneration = {
+                            viewModel.stopGeneration()
+                        },
+
+                        isGenerating = uiState.isGenerating,
+
+                        attachedFile = uiState.attachedFile,
+
+                        onAttachmentSelected = {
+                            viewModel.onAttachmentSelected(it)
+                        },
+
+                        speechRecognizerHelper =
+                            viewModel.speechRecognizerHelper
+                    )
+                }
+            },
+
+            snackbarHost = {
+                SnackbarHost(
+                    hostState = snackbarHostState
                 )
             },
-            snackbarHost = { SnackbarHost(snackbarHostState) },
+
             containerColor = MayraDarkBackground
         ) { paddingValues ->
+
             Box(
-                modifier = modifier
+                modifier = Modifier
                     .fillMaxSize()
                     .padding(paddingValues)
             ) {
+
                 if (uiState.messages.isEmpty()) {
+
                     WelcomeScreen(
                         onSelectPrompt = { prompt ->
+
                             viewModel.onInputTextChanged(prompt)
                             viewModel.sendMessage()
                         },
+
                         modifier = Modifier.fillMaxSize()
                     )
+
                 } else {
+
                     LazyColumn(
                         state = listState,
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(bottom = 6.dp)
+                            .padding(bottom = 8.dp)
                     ) {
-                        items(uiState.messages, key = { it.id }) { message ->
+
+                        items(
+                            items = uiState.messages,
+                            key = { message ->
+                                message.id
+                            }
+                        ) { message ->
+
                             ChatMessageItem(
                                 message = message,
-                                onRetry = { viewModel.retryMessage(it) },
-                                onSpeak = { viewModel.speakText(it) }
+
+                                onRetry = {
+                                    viewModel.retryMessage(it)
+                                },
+
+                                onSpeak = {
+                                    viewModel.speakText(it)
+                                }
                             )
                         }
 
-                        if (uiState.isThinking && uiState.messages.none { it.status == "SENDING" }) {
+                        /*
+                         * Only show the thinking indicator when there
+                         * isn't already a streaming message.
+                         */
+                        if (
+                            uiState.isThinking &&
+                            uiState.messages.none {
+                                it.status == "SENDING"
+                            }
+                        ) {
+
                             item {
-                                Box(modifier = Modifier.padding(16.dp)) {
+
+                                Box(
+                                    modifier = Modifier.padding(
+                                        horizontal = 16.dp,
+                                        vertical = 12.dp
+                                    )
+                                ) {
                                     ThinkingIndicator()
                                 }
                             }
