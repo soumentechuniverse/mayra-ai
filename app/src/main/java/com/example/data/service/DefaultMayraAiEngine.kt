@@ -8,17 +8,17 @@ import com.example.domain.service.AiService
 import kotlinx.coroutines.flow.Flow
 
 /**
- * Main production AI engine.
+ * Main production AI engine for Mayra.
  *
- * This class delegates all real AI work to GeminiService.
- * No fake/simulated answers are generated here.
+ * OpenAI is now the primary AI provider.
+ * GeminiService remains available separately during migration.
  */
 class DefaultMayraAiEngine(
-    private val geminiService: GeminiService = GeminiService()
+    private val openAIService: OpenAIService = OpenAIService()
 ) : AiService {
 
     override suspend fun isAvailable(): Boolean {
-        return geminiService.isAvailable()
+        return openAIService.isAvailable()
     }
 
     override suspend fun generateResponse(
@@ -29,7 +29,7 @@ class DefaultMayraAiEngine(
         attachments: List<Attachment>,
         enableSearch: Boolean
     ): Result<String> {
-        return geminiService.generateResponse(
+        return openAIService.generateResponse(
             conversationId = conversationId,
             prompt = prompt,
             history = history,
@@ -47,7 +47,7 @@ class DefaultMayraAiEngine(
         attachments: List<Attachment>,
         enableSearch: Boolean
     ): Flow<AiStreamChunk> {
-        return geminiService.generateStream(
+        return openAIService.generateStream(
             conversationId = conversationId,
             prompt = prompt,
             history = history,
