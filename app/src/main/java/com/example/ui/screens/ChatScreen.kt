@@ -46,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -84,6 +85,7 @@ fun ChatScreen(
     var updateError by remember { mutableStateOf<String?>(null) }
 
     val updateService = remember { AppUpdateService() }
+    val context = LocalContext.current
 
     LaunchedEffect(
         uiState.messages.size,
@@ -459,7 +461,7 @@ fun ChatScreen(
                             onClick = {
                                 updateInfo?.let { info ->
                                     updateService.openDownloadUrl(
-                                        context = androidx.compose.ui.platform.LocalContext.current,
+                                        context = context,
                                         downloadUrl = info.downloadUrl
                                     )
                                 }
