@@ -41,7 +41,9 @@ class ChatViewModel @JvmOverloads constructor(
         repository.getConversations()
             .onEach { convs ->
                 _uiState.update { current ->
-                    val selectedId = current.currentConversationId ?: convs.firstOrNull()?.id
+                    val selectedId =
+                        current.currentConversationId ?: convs.firstOrNull()?.id
+
                     current.copy(
                         conversations = convs,
                         currentConversationId = selectedId
@@ -49,10 +51,10 @@ class ChatViewModel @JvmOverloads constructor(
                 }
 
                 val currentId = _uiState.value.currentConversationId
+
                 if (currentId != null) {
                     observeMessages(currentId)
                 } else if (convs.isEmpty()) {
-                    // Create default conversation if none exist
                     viewModelScope.launch {
                         val newConv = repository.createConversation("New Chat")
                         selectConversation(newConv.id)
@@ -63,37 +65,54 @@ class ChatViewModel @JvmOverloads constructor(
 
         repository.getArchivedConversations()
             .onEach { archived ->
-                _uiState.update { it.copy(archivedConversations = archived) }
+                _uiState.update {
+                    it.copy(archivedConversations = archived)
+                }
             }
             .launchIn(viewModelScope)
     }
 
     fun selectConversation(id: String) {
-        _uiState.update { it.copy(currentConversationId = id) }
+        _uiState.update {
+            it.copy(currentConversationId = id)
+        }
+
         observeMessages(id)
+
         viewModelScope.launch {
             val conv = repository.getConversationById(id)
+
             if (conv != null) {
-                _uiState.update { it.copy(currentConversationTitle = conv.title) }
+                _uiState.update {
+                    it.copy(currentConversationTitle = conv.title)
+                }
             }
         }
     }
 
     private fun observeMessages(conversationId: String) {
         messagesJob?.cancel()
-        messagesJob = repository.getMessagesForConversation(conversationId)
+
+        messagesJob = repository
+            .getMessagesForConversation(conversationId)
             .onEach { msgs ->
-                _uiState.update { it.copy(messages = msgs) }
+                _uiState.update {
+                    it.copy(messages = msgs)
+                }
             }
             .launchIn(viewModelScope)
     }
 
     fun onInputTextChanged(text: String) {
-        _uiState.update { it.copy(inputText = text) }
+        _uiState.update {
+            it.copy(inputText = text)
+        }
     }
 
     fun onAttachmentSelected(attachment: AttachmentInfo?) {
-        _uiState.update { it.copy(attachedFile = attachment) }
+        _uiState.update {
+            it.copy(attachedFile = attachment)
+        }
     }
 
     fun newChat() {
@@ -102,6 +121,26 @@ class ChatViewModel @JvmOverloads constructor(
             selectConversation(newConv.id)
         }
     }
+
+    // ---------------------------------------------------------
+    // SETTINGS
+    // ---------------------------------------------------------
+
+    fun openSettings() {
+        _uiState.update {
+            it.copy(isSettingsOpen = true)
+        }
+    }
+
+    fun closeSettings() {
+        _uiState.update {
+            it.copy(isSettingsOpen = false)
+        }
+    }
+
+    // ---------------------------------------------------------
+    // CHAT
+    // ---------------------------------------------------------
 
     fun sendMessage() {
         val currentState = _uiState.value
@@ -112,7 +151,6 @@ class ChatViewModel @JvmOverloads constructor(
         if (prompt.isBlank() && attachment == null) return
         if (currentState.isGenerating) return
 
-        // Clear input and show generating/thinking state
         _uiState.update {
             it.copy(
                 inputText = "",
@@ -124,6 +162,7 @@ class ChatViewModel @JvmOverloads constructor(
         }
 
         activeStreamJob?.cancel()
+
         activeStreamJob = viewModelScope.launch {
             try {
                 repository.sendMessage(
@@ -133,43 +172,56 @@ class ChatViewModel @JvmOverloads constructor(
                     attachmentMimeType = attachment?.mimeType,
                     attachmentName = attachment?.name,
                     attachmentUriString = attachment?.uri?.toString()
-                ).catch { e ->
-                    _uiState.update {
-                        it.copy(
-                            isGenerating = false,
-                            isThinking = false,
-                            errorMessage = e.message ?: "Failed to generate response"
-                        )
-                    }
-                }.collect { event ->
-                    when (event) {
-                        is StreamEvent.TextChunk -> {
-                            // Immediately hide thinking indicator as soon as first chunk arrives!
-                            _uiState.update { it.copy(isThinking = false) }
-                        }
-                        is StreamEvent.SourcesDiscovered -> {
-                            _uiState.update { it.copy(isThinking = false) }
-                        }
-                        is StreamEvent.Completed -> {
-                            _uiState.update {
-                                it.copy(
-                                    isGenerating = false,
-                                    isThinking = false
-                                )
-                            }
-                        }
-                        is StreamEvent.Error -> {
-                            _uiState.update {
-                                it.copy(
-                                    isGenerating = false,
-                                    isThinking = false,
-                                    errorMessage = event.message
-                                )
-                            }
+                )
+                    .catch { e ->
+                        _uiState.update {
+                            it.copy(
+                                isGenerating = false,
+                                isThinking = false,
+                                errorMessage =
+                                    e.message ?: "Failed to generate response"
+                            )
                         }
                     }
-                }
+                    .collect { event ->
+
+                        when (event) {
+
+                            is StreamEvent.TextChunk -> {
+                                _uiState.update {
+                                    it.copy(isThinking = false)
+                                }
+                            }
+
+                            is StreamEvent.SourcesDiscovered -> {
+                                _uiState.update {
+                                    it.copy(isThinking = false)
+                                }
+                            }
+
+                            is StreamEvent.Completed -> {
+                                _uiState.update {
+                                    it.copy(
+                                        isGenerating = false,
+                                        isThinking = false
+                                    )
+                                }
+                            }
+
+                            is StreamEvent.Error -> {
+                                _uiState.update {
+                                    it.copy(
+                                        isGenerating = false,
+                                        isThinking = false,
+                                        errorMessage = event.message
+                                    )
+                                }
+                            }
+                        }
+                    }
+
             } catch (e: Exception) {
+
                 _uiState.update {
                     it.copy(
                         isGenerating = false,
@@ -177,7 +229,9 @@ class ChatViewModel @JvmOverloads constructor(
                         errorMessage = e.message
                     )
                 }
+
             } finally {
+
                 _uiState.update {
                     it.copy(
                         isGenerating = false,
@@ -190,6 +244,7 @@ class ChatViewModel @JvmOverloads constructor(
 
     fun retryMessage(messageId: String) {
         val convId = _uiState.value.currentConversationId ?: return
+
         if (_uiState.value.isGenerating) return
 
         _uiState.update {
@@ -201,8 +256,10 @@ class ChatViewModel @JvmOverloads constructor(
         }
 
         activeStreamJob?.cancel()
+
         activeStreamJob = viewModelScope.launch {
             try {
+
                 repository.retryMessage(convId, messageId)
                     .catch { e ->
                         _uiState.update {
@@ -214,13 +271,21 @@ class ChatViewModel @JvmOverloads constructor(
                         }
                     }
                     .collect { event ->
+
                         when (event) {
+
                             is StreamEvent.TextChunk -> {
-                                _uiState.update { it.copy(isThinking = false) }
+                                _uiState.update {
+                                    it.copy(isThinking = false)
+                                }
                             }
+
                             is StreamEvent.SourcesDiscovered -> {
-                                _uiState.update { it.copy(isThinking = false) }
+                                _uiState.update {
+                                    it.copy(isThinking = false)
+                                }
                             }
+
                             is StreamEvent.Completed -> {
                                 _uiState.update {
                                     it.copy(
@@ -229,6 +294,7 @@ class ChatViewModel @JvmOverloads constructor(
                                     )
                                 }
                             }
+
                             is StreamEvent.Error -> {
                                 _uiState.update {
                                     it.copy(
@@ -240,7 +306,9 @@ class ChatViewModel @JvmOverloads constructor(
                             }
                         }
                     }
+
             } catch (e: Exception) {
+
                 _uiState.update {
                     it.copy(
                         isGenerating = false,
@@ -248,7 +316,9 @@ class ChatViewModel @JvmOverloads constructor(
                         errorMessage = e.message
                     )
                 }
+
             } finally {
+
                 _uiState.update {
                     it.copy(
                         isGenerating = false,
@@ -262,6 +332,7 @@ class ChatViewModel @JvmOverloads constructor(
     fun stopGeneration() {
         activeStreamJob?.cancel()
         activeStreamJob = null
+
         _uiState.update {
             it.copy(
                 isGenerating = false,
@@ -270,22 +341,36 @@ class ChatViewModel @JvmOverloads constructor(
         }
     }
 
+    // ---------------------------------------------------------
+    // CONVERSATION MANAGEMENT
+    // ---------------------------------------------------------
+
     fun renameConversation(id: String, newTitle: String) {
         viewModelScope.launch {
+
             repository.updateConversationTitle(id, newTitle)
+
             if (_uiState.value.currentConversationId == id) {
-                _uiState.update { it.copy(currentConversationTitle = newTitle) }
+                _uiState.update {
+                    it.copy(currentConversationTitle = newTitle)
+                }
             }
         }
     }
 
-    fun togglePinConversation(id: String, isPinned: Boolean) {
+    fun togglePinConversation(
+        id: String,
+        isPinned: Boolean
+    ) {
         viewModelScope.launch {
             repository.togglePinConversation(id, isPinned)
         }
     }
 
-    fun toggleArchiveConversation(id: String, isArchived: Boolean) {
+    fun toggleArchiveConversation(
+        id: String,
+        isArchived: Boolean
+    ) {
         viewModelScope.launch {
             repository.toggleArchiveConversation(id, isArchived)
         }
@@ -293,9 +378,15 @@ class ChatViewModel @JvmOverloads constructor(
 
     fun deleteConversation(id: String) {
         viewModelScope.launch {
+
             repository.deleteConversation(id)
+
             if (_uiState.value.currentConversationId == id) {
-                val remaining = _uiState.value.conversations.filter { it.id != id }
+
+                val remaining =
+                    _uiState.value.conversations
+                        .filter { it.id != id }
+
                 if (remaining.isNotEmpty()) {
                     selectConversation(remaining.first().id)
                 } else {
@@ -311,8 +402,10 @@ class ChatViewModel @JvmOverloads constructor(
 
     override fun onCleared() {
         super.onCleared()
+
         speechRecognizerHelper.stopListening()
         textToSpeechHelper.shutdown()
+
         activeStreamJob?.cancel()
         messagesJob?.cancel()
     }
