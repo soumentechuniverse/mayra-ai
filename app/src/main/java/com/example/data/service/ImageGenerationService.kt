@@ -1,13 +1,11 @@
 package com.example.data.service
 
-import com.example.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
@@ -18,34 +16,22 @@ data class GeneratedImageResult(
 )
 
 class ImageGenerationService(
-    private val apiKeyProvider: () -> String = {
-        BuildConfig.OPENAI_API_KEY
-    },
     private val client: OkHttpClient = createClient()
 ) {
 
     companion object {
 
         private const val ENDPOINT =
-            "https://api.openai.com/v1/images/generations"
+            "https://mayra-ai-six.vercel.app/api/images"
 
         private const val IMAGE_MODEL =
             "gpt-image-2.5-flare"
 
         private fun createClient(): OkHttpClient =
             OkHttpClient.Builder()
-                .connectTimeout(
-                    30,
-                    TimeUnit.SECONDS
-                )
-                .readTimeout(
-                    180,
-                    TimeUnit.SECONDS
-                )
-                .writeTimeout(
-                    180,
-                    TimeUnit.SECONDS
-                )
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .readTimeout(180, TimeUnit.SECONDS)
+                .writeTimeout(180, TimeUnit.SECONDS)
                 .build()
     }
 
@@ -58,18 +44,6 @@ class ImageGenerationService(
 
             try {
 
-                val apiKey = apiKeyProvider()
-                    .trim()
-                    .removeSurrounding("\"")
-
-                if (apiKey.isEmpty()) {
-                    return@withContext Result.failure(
-                        IllegalStateException(
-                            "OpenAI API key is not configured."
-                        )
-                    )
-                }
-
                 val size = resolveSize(
                     aspectRatio = aspectRatio,
                     imageSize = imageSize
@@ -77,34 +51,15 @@ class ImageGenerationService(
 
                 val requestJson =
                     JSONObject()
-                        .put(
-                            "model",
-                            IMAGE_MODEL
-                        )
-                        .put(
-                            "prompt",
-                            prompt
-                        )
-                        .put(
-                            "size",
-                            size
-                        )
-                        .put(
-                            "quality",
-                            "auto"
-                        )
-                        .put(
-                            "output_format",
-                            "png"
-                        )
+                        .put("model", IMAGE_MODEL)
+                        .put("prompt", prompt)
+                        .put("size", size)
+                        .put("quality", "auto")
+                        .put("output_format", "png")
 
                 val request =
                     Request.Builder()
                         .url(ENDPOINT)
-                        .addHeader(
-                            "Authorization",
-                            "Bearer $apiKey"
-                        )
                         .addHeader(
                             "Content-Type",
                             "application/json"
@@ -113,14 +68,12 @@ class ImageGenerationService(
                             requestJson
                                 .toString()
                                 .toRequestBody(
-                                    "application/json"
-                                        .toMediaType()
+                                    "application/json".toMediaType()
                                 )
                         )
                         .build()
 
-                client
-                    .newCall(request)
+                client.newCall(request)
                     .execute()
                     .use { response ->
 
@@ -133,7 +86,7 @@ class ImageGenerationService(
 
                             return@withContext Result.failure(
                                 IllegalStateException(
-                                    "OpenAI image API error " +
+                                    "Mayra image API error " +
                                         "(${response.code}): " +
                                         extractError(body)
                                 )
@@ -166,8 +119,7 @@ class ImageGenerationService(
                 Result.failure(
                     IllegalStateException(
                         "Image generation failed: " +
-                            (e.message
-                                ?: "Unknown error"),
+                            (e.message ?: "Unknown error"),
                         e
                     )
                 )
@@ -179,24 +131,16 @@ class ImageGenerationService(
         imageSize: String
     ): String {
 
-        return when {
+        return when (aspectRatio) {
 
-            aspectRatio == "16:9" ->
+            "16:9",
+            "4:3",
+            "3:2" ->
                 "1536x1024"
 
-            aspectRatio == "9:16" ->
-                "1024x1536"
-
-            aspectRatio == "4:3" ->
-                "1536x1024"
-
-            aspectRatio == "3:4" ->
-                "1024x1536"
-
-            aspectRatio == "3:2" ->
-                "1536x1024"
-
-            aspectRatio == "2:3" ->
+            "9:16",
+            "3:4",
+            "2:3" ->
                 "1024x1536"
 
             else ->
@@ -255,7 +199,7 @@ class ImageGenerationService(
         } catch (_: Exception) {
 
             body.ifBlank {
-                "Unknown OpenAI image API error"
+                "Unknown Mayra image API error"
             }
         }
     }
