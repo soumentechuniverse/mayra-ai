@@ -20,6 +20,8 @@ export default async function handler(req, res) {
   }
 
   try {
+    const wantsStream = Boolean(req.body?.stream);
+
     const upstream = await fetch(
       "https://api.openai.com/v1/responses",
       {
@@ -27,7 +29,7 @@ export default async function handler(req, res) {
         headers: {
           "Authorization": `Bearer ${apiKey}`,
           "Content-Type": "application/json",
-          "Accept": req.body?.stream
+          "Accept": wantsStream
             ? "text/event-stream"
             : "application/json"
         },
@@ -37,21 +39,50 @@ export default async function handler(req, res) {
 
     const contentType =
       upstream.headers.get("content-type") ||
-      "application/json";
+      (wantsStream ? "text/event-stream" : "application/json");
 
     res.status(upstream.status);
     res.setHeader("Content-Type", contentType);
-    res.setHeader("Cache-Control", "no-store");
+    res.setHeader(
+      "Cache-Control",
+      wantsStream ? "no-cache, no-transform" : "no-store"
+    );
+    res.setHeader("X-Accel-Buffering", "no");
 
-    const text = await upstream.text();
+    if (!wantsStream || !upstream.body) {
+      const text = await upstream.text();
+      return res.send(text);
+    }
 
-    return res.send(text);
+    const reader = upstream.body.getReader();
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          break;
+        }
+
+        if (value) {
+          res.write(Buffer.from(value));
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    return res.end();
 
   } catch (error) {
-    return res.status(500).json({
-      error: error instanceof Error
-        ? error.message
-        : "Unknown server error"
-    });
+    if (!res.headersSent) {
+      return res.status(500).json({
+        error: error instanceof Error
+          ? error.message
+          : "Unknown server error"
+      });
+    }
+
+    return res.end();
   }
 }
