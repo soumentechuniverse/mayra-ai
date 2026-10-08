@@ -13,9 +13,10 @@ val envProperties = Properties().apply {
         envFile.inputStream().use { load(it) }
     }
 }
-val geminiApiKey = envProperties.getProperty("GEMINI_API_KEY")
-    ?: System.getenv("GEMINI_API_KEY")
-    ?: (project.findProperty("GEMINI_API_KEY") as? String)
+
+val openAiApiKey = envProperties.getProperty("OPENAI_API_KEY")
+    ?: System.getenv("OPENAI_API_KEY")
+    ?: (project.findProperty("OPENAI_API_KEY") as? String)
     ?: ""
 
 android {
@@ -30,7 +31,12 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField("String", "GEMINI_API_KEY", "\"$geminiApiKey\"")
+
+        buildConfigField(
+            "String",
+            "OPENAI_API_KEY",
+            "\"$openAiApiKey\""
+        )
     }
 
     buildTypes {
@@ -42,17 +48,21 @@ android {
             )
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+
     kotlin {
         jvmToolchain(21)
     }
+
     buildFeatures {
         compose = true
         buildConfig = true
     }
+
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
@@ -66,6 +76,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.activity.compose)
+
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)
     implementation(libs.androidx.ui.graphics)
@@ -95,12 +106,15 @@ dependencies {
     implementation(libs.commonmark.ext.gfm.strikethrough)
     implementation(libs.commonmark.ext.autolink)
 
+    // Tests
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.junit)
     testImplementation(libs.androidx.espresso.core)
     testImplementation(platform(libs.androidx.compose.bom))
     testImplementation(libs.androidx.ui.test.junit4)
+
+    // Debug
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 }
