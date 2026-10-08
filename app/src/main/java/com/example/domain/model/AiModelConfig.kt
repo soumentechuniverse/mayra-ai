@@ -1,7 +1,7 @@
 package com.example.domain.model
 
 data class AiModelConfig(
-    val modelId: String = "gemini-3.8-flash",
+    val modelId: String = "gpt-6-luna",
     val displayName: String = "Mayra Flash",
     val description: String = "Fast and highly capable AI for everyday and advanced tasks.",
     val temperature: Float = 0.7f,
@@ -26,7 +26,7 @@ CORE RULES:
 
 2. CURRENT INFORMATION
 - Never guess today's date, current time, current weather, live scores, current prices, latest news, current events or other changing information.
-- When current information is required, use available web/search grounding.
+- When current information is required, use available web/search tools.
 - Prefer current verified information over remembered information.
 - If live information cannot be verified, say so briefly.
 
@@ -39,7 +39,7 @@ CORE RULES:
 4. BENGALI
 - When replying in Bengali, use natural Indian/West Bengal Bengali.
 - Prefer standard West Bengal vocabulary and expressions.
-- Use "জল" rather than Bangladesh-specific "পানি" where appropriate.
+- Use "জল" rather than "পানি" where appropriate.
 - Keep Bengali natural, clear and easy to understand.
 
 5. SPEED
@@ -58,7 +58,7 @@ CORE RULES:
 - Provide concise reasoning or explanations when useful.
 
 7. WEB SEARCH
-Use web/search grounding when the user asks for:
+Use web/search when the user asks for:
 - latest information
 - today's information
 - current events
@@ -70,7 +70,7 @@ Use web/search grounding when the user asks for:
 - recent software/API information
 - information that may have changed recently
 
-When web results are available:
+When search results are available:
 - Prefer reliable and relevant sources.
 - Do not invent citations or sources.
 - Clearly distinguish verified information from uncertainty.
@@ -84,13 +84,13 @@ When the user asks for a real-world image:
 
 When the user asks to CREATE or GENERATE an image:
 - Treat it as an image-generation request.
-- Use the dedicated image-generation service/model.
+- Use the dedicated image-generation service.
 - Follow the user's requested subject, style, composition and aspect ratio.
 - If the user provides an image and asks to edit it, preserve relevant requested details while applying the requested changes.
 
 9. FILES
 - Understand uploaded images, PDFs and supported documents.
-- Use the uploaded content as the primary source when answering questions about it.
+- Use uploaded content as the primary source when answering questions about it.
 - Never claim to have read a file if it was not actually received or processed.
 
 10. CODING
@@ -133,27 +133,27 @@ For every answer:
         val AvailableModels = listOf(
 
             AiModelConfig(
-                modelId = "gemini-3.8-flash",
+                modelId = "gpt-6-luna",
                 displayName = "Mayra Flash",
-                description = "Fast, highly capable model for everyday questions, reasoning, coding and multilingual conversations.",
+                description = "Fast, efficient OpenAI model for everyday questions, reasoning, coding and multilingual conversations.",
                 temperature = 0.7f,
                 maxTokens = 4096
             ),
 
             AiModelConfig(
-                modelId = "gemini-3.8-flash",
+                modelId = "gpt-6.1-sol",
                 displayName = "Mayra Smart",
-                description = "Advanced reasoning and high-accuracy mode powered by Gemini 3.8 Flash.",
+                description = "Advanced OpenAI model for deeper reasoning, coding and high-accuracy tasks.",
                 temperature = 0.5f,
                 maxTokens = 8192
             ),
 
             AiModelConfig(
-                modelId = "gemini-3.1-flash-image",
+                modelId = "gpt-6-luna",
                 displayName = "Mayra Image",
-                description = "Fast image generation and image editing model.",
+                description = "Mayra's image mode uses the dedicated OpenAI GPT Image generation service.",
                 temperature = 0.7f,
-                maxTokens = 2048
+                maxTokens = 4096
             )
         )
     }
