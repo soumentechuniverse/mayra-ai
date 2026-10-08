@@ -63,12 +63,12 @@ class OpenAIService(
             }
 
             val requestJson = buildRequest(
-                prompt,
-                history,
-                attachments,
-                config,
-                enableSearch,
-                false
+                prompt = prompt,
+                history = history,
+                attachments = attachments,
+                config = config,
+                enableSearch = enableSearch,
+                stream = false
             )
 
             val request = Request.Builder()
@@ -126,12 +126,12 @@ class OpenAIService(
 
         try {
             val requestJson = buildRequest(
-                prompt,
-                history,
-                attachments,
-                config,
-                enableSearch,
-                true
+                prompt = prompt,
+                history = history,
+                attachments = attachments,
+                config = config,
+                enableSearch = enableSearch,
+                stream = true
             )
 
             val request = Request.Builder()
@@ -176,15 +176,20 @@ class OpenAIService(
                     }
 
                     while (!source.exhausted()) {
+
                         val line = source.readUtf8Line() ?: break
 
-                        if (!line.startsWith("data:")) continue
+                        if (!line.startsWith("data:")) {
+                            continue
+                        }
 
                         val data = line
                             .removePrefix("data:")
                             .trim()
 
-                        if (data.isEmpty()) continue
+                        if (data.isEmpty()) {
+                            continue
+                        }
 
                         if (data == "[DONE]") {
                             emit(
@@ -268,28 +273,53 @@ class OpenAIService(
 
         val content = JSONArray()
 
+        // User text
         content.put(
             JSONObject()
                 .put("type", "input_text")
                 .put("text", prompt)
         )
 
+        // Attachments
         attachments.forEach { attachment ->
 
             val base64 = attachment.base64Data
 
-            if (
-                !base64.isNullOrEmpty() &&
-                attachment.mimeType.startsWith("image/")
-            ) {
-                content.put(
-                    JSONObject()
-                        .put("type", "input_image")
-                        .put(
-                            "image_url",
-                            "data:${attachment.mimeType};base64,$base64"
-                        )
-                )
+            if (base64.isNullOrEmpty()) {
+                return@forEach
+            }
+
+            val mimeType = attachment.mimeType.lowercase()
+            val fileName = attachment.name.ifBlank { "attachment" }
+
+            when {
+                // Images
+                mimeType.startsWith("image/") -> {
+                    content.put(
+                        JSONObject()
+                            .put("type", "input_image")
+                            .put(
+                                "image_url",
+                                "data:$mimeType;base64,$base64"
+                            )
+                            .put("detail", "auto")
+                    )
+                }
+
+                // PDF, DOC, DOCX, TXT, MD, CSV, JSON,
+                // XLS, XLSX, PPT, PPTX, RTF, code and other files
+                else -> {
+                    content.put(
+                        JSONObject()
+                            .put("type", "input_file")
+                            .put("filename", fileName)
+                            .put(
+                                "file_data",
+                                "data:$mimeType;base64,$base64"
+                            )
+                            .put("detail", "auto")
+                    )
+                }
             }
         }
 
@@ -298,11 +328,13 @@ class OpenAIService(
 
         root.put("input", input)
 
+        // OpenAI Web Search
         if (enableSearch) {
             root.put(
                 "tools",
                 JSONArray().put(
-                    JSONObject().put("type", "web_search")
+                    JSONObject()
+                        .put("type", "web_search")
                 )
             )
         }
@@ -311,10 +343,12 @@ class OpenAIService(
     }
 
     private fun parseStreamDelta(data: String): String {
+
         return try {
             val json = JSONObject(data)
 
             when (json.optString("type")) {
+
                 "response.output_text.delta" ->
                     json.optString("delta", "")
 
@@ -330,6 +364,7 @@ class OpenAIService(
     private fun extractOutputText(body: String): String {
 
         return try {
+
             val root = JSONObject(body)
 
             val directText = root.optString("output_text", "")
@@ -344,11 +379,17 @@ class OpenAIService(
             val result = StringBuilder()
 
             for (i in 0 until output.length()) {
-                val item = output.optJSONObject(i) ?: continue
-                val content = item.optJSONArray("content") ?: continue
+
+                val item = output.optJSONObject(i)
+                    ?: continue
+
+                val content = item.optJSONArray("content")
+                    ?: continue
 
                 for (j in 0 until content.length()) {
-                    val part = content.optJSONObject(j) ?: continue
+
+                    val part = content.optJSONObject(j)
+                        ?: continue
 
                     val text = part.optString("text", "")
 
@@ -368,13 +409,18 @@ class OpenAIService(
     private fun extractError(body: String): String {
 
         return try {
+
             val root = JSONObject(body)
             val error = root.optJSONObject("error")
 
-            error?.optString("message", body) ?: body
+            error?.optString("message", body)
+                ?: body
 
         } catch (_: Exception) {
-            body.ifBlank { "Unknown OpenAI API error" }
+
+            body.ifBlank {
+                "Unknown OpenAI API error"
+            }
         }
     }
 }
