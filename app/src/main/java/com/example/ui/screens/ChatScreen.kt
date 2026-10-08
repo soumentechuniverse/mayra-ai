@@ -303,6 +303,20 @@ fun ChatScreen(
                     .padding(paddingValues)
             ) {
 
+                /*
+                 * SUBTLE SOUMEN MONDAL WATERMARK
+                 *
+                 * Kept behind the conversation content so it
+                 * remains visible without disturbing readability.
+                 */
+                Text(
+                    text = "Soumen Mondal",
+                    color = MayraTextPrimary.copy(alpha = 0.04f),
+                    fontSize = 30.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+
                 if (uiState.messages.isEmpty()) {
 
                     WelcomeScreen(
