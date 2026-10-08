@@ -14,11 +14,9 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      # 1. Checkout source code
       - name: Checkout
         uses: actions/checkout@v5
 
-      # 2. Setup Java
       - name: Setup Java
         uses: actions/setup-java@v6
         with:
@@ -26,45 +24,34 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      # 3. Make Gradle executable
       - name: Make Gradle executable
         run: chmod +x gradlew
 
-      # 4. Configure Gemini API Key
-      - name: Configure Gemini API Key
+      - name: Configure OpenAI API Key
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          API_KEY="${GEMINI_API_KEY:-$GOOGLE_API_KEY}"
-
-          if [ -z "$API_KEY" ]; then
-            echo "ERROR: GEMINI_API_KEY secret is missing."
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "ERROR: OPENAI_API_KEY secret is missing."
             exit 1
           fi
 
-          echo "GEMINI_API_KEY=$API_KEY" > .env
-          echo "GEMINI_API_KEY=$API_KEY" > app/.env
-          echo "GEMINI_API_KEY=$API_KEY" >> local.properties
+          echo "OPENAI_API_KEY=$OPENAI_API_KEY" > .env
+          echo "OPENAI_API_KEY=$OPENAI_API_KEY" > app/.env
+          echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> local.properties
 
-      # 5. Build Debug APK
       - name: Build Debug APK
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          API_KEY="${GEMINI_API_KEY:-$GOOGLE_API_KEY}"
-
           ./gradlew assembleDebug \
-            -PGEMINI_API_KEY="$API_KEY"
+            -POPENAI_API_KEY="$OPENAI_API_KEY"
 
-      # 6. Rename APK
       - name: Rename APK
         run: |
           cp app/build/outputs/apk/debug/app-debug.apk \
              app/build/outputs/apk/debug/Mayra-AI.apk
 
-      # 7. Upload APK artifact
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v7
         with:
@@ -72,7 +59,6 @@ jobs:
           path: app/build/outputs/apk/debug/Mayra-AI.apk
           if-no-files-found: error
 
-      # 8. Read application version
       - name: Read App Version
         id: version
         if: github.event_name == 'workflow_dispatch'
@@ -87,11 +73,6 @@ jobs:
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-          echo "=================================="
-          echo "Mayra AI version: $VERSION"
-          echo "=================================="
-
-      # 9. Create or update GitHub Release
       - name: Publish GitHub Release
         if: github.event_name == 'workflow_dispatch'
         env:
@@ -101,22 +82,10 @@ jobs:
           TAG="v${VERSION}"
           APK="app/build/outputs/apk/debug/Mayra-AI.apk"
 
-          echo "Release tag: $TAG"
-
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release already exists."
-            echo "Updating APK asset..."
-
             gh release upload "$TAG" "$APK" --clobber
-
           else
-            echo "Creating new GitHub Release..."
-
             gh release create "$TAG" "$APK" \
               --title "Mayra AI v${VERSION}" \
               --generate-notes
           fi
-
-          echo "=================================="
-          echo "GitHub Release published successfully."
-          echo "=================================="
