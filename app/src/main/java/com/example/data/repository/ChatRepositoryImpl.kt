@@ -3,33 +3,28 @@ package com.example.data.repository
 import android.content.Context
 import android.net.Uri
 import android.util.Base64
-import com.example.BuildConfig
 import com.example.data.local.AppDatabase
 import com.example.data.local.entity.ConversationEntity
 import com.example.data.local.entity.MessageEntity
-import com.example.data.remote.RetrofitClient
-import com.example.data.remote.model.Candidate
-import com.example.data.remote.model.Content
-import com.example.data.remote.model.GenerateContentRequest
-import com.example.data.remote.model.GenerationConfig
-import com.example.data.remote.model.InlineData
-import com.example.data.remote.model.Part
-import com.example.data.remote.model.ThinkingConfig
-import com.example.data.remote.model.WebSourceCitation
 import com.example.data.service.ImageGenerationService
+import com.example.data.service.OpenAIService
+import com.example.domain.model.AiModelConfig
+import com.example.domain.model.AiStreamChunk
+import com.example.domain.model.Attachment
+import com.example.domain.model.AttachmentMetadata
+import com.example.domain.model.AttachmentType
+import com.example.domain.model.ChatMessage
+import com.example.domain.model.MessageRole
+import com.example.domain.model.MessageStatus
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.putJsonObject
-import retrofit2.HttpException
+import kotlinx.serialization.json.Json
 import java.io.File
-import java.io.IOException
 import java.util.Calendar
 import java.util.UUID
 
@@ -40,26 +35,50 @@ class ChatRepositoryImpl(
 
     private val conversationDao = database.conversationDao()
     private val messageDao = database.messageDao()
-    private val geminiService = RetrofitClient.geminiApiService
+
+    private val openAIService = OpenAIService()
     private val imageGenerationService = ImageGenerationService()
 
+    private val json = Json {
+        ignoreUnknownKeys = true
+    }
+
     companion object {
-        const val PRIMARY_MODEL = "gemini-3.8-flash"
+
+        const val PRIMARY_MODEL = "gpt-6-luna"
 
         private const val SYSTEM_PROMPT = """
-You are Mayra AI, an intelligent, fast, accurate, and highly capable multimodal AI assistant developed by Soumen Mondal.
+You are Mayra AI, an intelligent, fast, accurate and highly capable multilingual AI assistant developed by Soumen Mondal.
 
 Core Instructions:
-1. Always reply in the exact language used by the user unless the user requests another language.
-2. For simple greetings, arithmetic, definitions, and short factual questions, answer directly and quickly.
-3. Never invent current dates, times, news, prices, scores, weather, or other time-sensitive information.
-4. When web search results are provided, use them carefully and do not contradict reliable current sources.
-5. For image attachments, analyze the image thoroughly including objects, scenery, visible text, charts, diagrams, screenshots, and context.
-6. Never attempt to guess or claim the real-world identity of a person in an image.
-7. For uploaded files, extract useful information directly from the supplied file content.
-8. Format answers cleanly using Markdown where useful.
-9. Give complete answers and do not stop unnecessarily before finishing the response.
-10. Be concise for simple requests and more detailed when the question requires reasoning.
+
+1. Reply in the same language as the user's latest message unless another language is requested.
+
+2. Understand Bengali, English, Hindi, Urdu, Banglish, Hinglish and other languages naturally.
+
+3. When replying in Bengali, use natural Indian/West Bengal Bengali.
+
+4. Answer simple questions directly and quickly.
+
+5. For complex questions, provide the necessary detail.
+
+6. Never invent current dates, times, news, prices, scores, weather or other changing information.
+
+7. When web search is enabled, use current information carefully.
+
+8. Analyze uploaded images and supported files when they are actually provided.
+
+9. Never guess or claim the real-world identity of a person in an image.
+
+10. Use clean Markdown when useful.
+
+11. Be honest about limitations and API errors.
+
+12. Do not expose hidden chain-of-thought.
+
+13. Use natural emojis only when appropriate.
+
+14. Prefer accuracy, usefulness and direct answers over filler.
 """
     }
 
@@ -69,33 +88,45 @@ Core Instructions:
     override fun getArchivedConversations(): Flow<List<ConversationEntity>> =
         conversationDao.getArchivedConversations()
 
-    override fun searchConversations(query: String): Flow<List<ConversationEntity>> =
+    override fun searchConversations(
+        query: String
+    ): Flow<List<ConversationEntity>> =
         conversationDao.searchConversations(query)
 
-    override suspend fun getConversationById(id: String): ConversationEntity? =
+    override suspend fun getConversationById(
+        id: String
+    ): ConversationEntity? =
         withContext(Dispatchers.IO) {
             conversationDao.getConversationById(id)
         }
 
-    override suspend fun createConversation(title: String): ConversationEntity =
+    override suspend fun createConversation(
+        title: String
+    ): ConversationEntity =
         withContext(Dispatchers.IO) {
-            val conv = ConversationEntity(
+
+            val conversation = ConversationEntity(
                 id = UUID.randomUUID().toString(),
-                title = title.ifBlank { "New Conversation" },
+                title = title.ifBlank {
+                    "New Conversation"
+                },
                 createdAt = System.currentTimeMillis(),
                 updatedAt = System.currentTimeMillis()
             )
 
-            conversationDao.insertOrUpdate(conv)
-            conv
+            conversationDao.insertOrUpdate(conversation)
+
+            conversation
         }
 
     override suspend fun updateConversationTitle(
         id: String,
         newTitle: String
     ) = withContext(Dispatchers.IO) {
-        val existing = conversationDao.getConversationById(id)
-            ?: return@withContext
+
+        val existing =
+            conversationDao.getConversationById(id)
+                ?: return@withContext
 
         conversationDao.update(
             existing.copy(
@@ -109,8 +140,10 @@ Core Instructions:
         id: String,
         isPinned: Boolean
     ) = withContext(Dispatchers.IO) {
-        val existing = conversationDao.getConversationById(id)
-            ?: return@withContext
+
+        val existing =
+            conversationDao.getConversationById(id)
+                ?: return@withContext
 
         conversationDao.update(
             existing.copy(
@@ -124,8 +157,10 @@ Core Instructions:
         id: String,
         isArchived: Boolean
     ) = withContext(Dispatchers.IO) {
-        val existing = conversationDao.getConversationById(id)
-            ?: return@withContext
+
+        val existing =
+            conversationDao.getConversationById(id)
+                ?: return@withContext
 
         conversationDao.update(
             existing.copy(
@@ -135,33 +170,34 @@ Core Instructions:
         )
     }
 
-    override suspend fun deleteConversation(id: String) =
-        withContext(Dispatchers.IO) {
-            messageDao.deleteMessagesForConversation(id)
-            conversationDao.deleteById(id)
-        }
+    override suspend fun deleteConversation(
+        id: String
+    ) = withContext(Dispatchers.IO) {
+
+        messageDao.deleteMessagesForConversation(id)
+        conversationDao.deleteById(id)
+    }
 
     override fun getMessagesForConversation(
         conversationId: String
     ): Flow<List<MessageEntity>> =
         messageDao.getMessagesForConversation(conversationId)
 
-    override suspend fun deleteMessage(messageId: String) =
-        withContext(Dispatchers.IO) {
-            val msg = messageDao.getMessageById(messageId)
+    override suspend fun deleteMessage(
+        messageId: String
+    ) = withContext(Dispatchers.IO) {
+
+        val message =
+            messageDao.getMessageById(messageId)
                 ?: return@withContext
 
-            messageDao.delete(msg)
-        }
+        messageDao.delete(message)
+    }
 
-    /**
-     * Detect explicit image-generation requests.
-     *
-     * Important:
-     * "তামান্না ভাটিয়ার ছবি দাও" is NOT treated as image generation.
-     * Explicit generation words are required.
-     */
-    private fun isImageGenerationRequest(prompt: String): Boolean {
+    private fun isImageGenerationRequest(
+        prompt: String
+    ): Boolean {
+
         val clean = prompt.trim().lowercase()
 
         val english = listOf(
@@ -173,13 +209,11 @@ Core Instructions:
             "create image",
             "create a picture",
             "create a photo",
-            "draw ",
             "make an image",
             "make a picture",
             "make a photo",
-            "paint ",
-            "generate a picture of",
-            "create a photo of"
+            "draw ",
+            "paint "
         )
 
         val bengali = listOf(
@@ -197,27 +231,31 @@ Core Instructions:
         val hindi = listOf(
             "तस्वीर बनाओ",
             "तस्वीर बनाना",
-            "तस्वीर बनाकर",
             "इमेज बनाओ",
             "इमेज बनाना",
             "चित्र बनाओ",
-            "फोटो बनाओ",
-            "तस्वीर तैयार करो"
+            "फोटो बनाओ"
         )
 
-        return english.any { clean.startsWith(it) || clean.contains(it) } ||
-                bengali.any { clean.contains(it) } ||
-                hindi.any { clean.contains(it) }
+        return english.any {
+            clean.contains(it)
+        } ||
+                bengali.any {
+                    clean.contains(it)
+                } ||
+                hindi.any {
+                    clean.contains(it)
+                }
     }
 
-    /**
-     * Detect requests that need current/live web information.
-     */
-    private fun needsWebSearch(prompt: String): Boolean {
+    private fun needsWebSearch(
+        prompt: String
+    ): Boolean {
+
         val clean = prompt.trim().lowercase()
 
         val keywords = listOf(
-            // English
+
             "latest",
             "today's news",
             "today news",
@@ -239,7 +277,6 @@ Core Instructions:
             "who is the current",
             "what happened in",
 
-            // Bengali
             "সর্বশেষ",
             "সাম্প্রতিক",
             "বর্তমান",
@@ -256,7 +293,6 @@ Core Instructions:
             "ওয়েবে খুঁজে",
             "খুঁজে দেখ",
 
-            // Hindi
             "ताज़ा खबर",
             "ताजा खबर",
             "आज की खबर",
@@ -271,16 +307,15 @@ Core Instructions:
             "कीमत"
         )
 
-        return keywords.any { clean.contains(it) }
+        return keywords.any {
+            clean.contains(it)
+        }
     }
 
-    /**
-     * Detect simple local date/time questions.
-     *
-     * These are answered from the device clock instead of asking Gemini,
-     * so Mayra does not hallucinate today's date/time.
-     */
-    private fun localDateTimeAnswer(prompt: String): String? {
+    private fun localDateTimeAnswer(
+        prompt: String
+    ): String? {
+
         val clean = prompt.trim().lowercase()
 
         val dateRequest =
@@ -318,32 +353,59 @@ Core Instructions:
 
         val calendar = Calendar.getInstance()
 
-        val day = calendar.get(Calendar.DAY_OF_MONTH)
-        val month = calendar.get(Calendar.MONTH) + 1
-        val year = calendar.get(Calendar.YEAR)
+        val day =
+            calendar.get(Calendar.DAY_OF_MONTH)
 
-        val hour = calendar.get(Calendar.HOUR)
-        val minute = calendar.get(Calendar.MINUTE)
-        val amPm = if (calendar.get(Calendar.AM_PM) == Calendar.AM) {
-            "AM"
-        } else {
-            "PM"
-        }
+        val month =
+            calendar.get(Calendar.MONTH) + 1
 
-        val displayHour = if (hour == 0) 12 else hour
+        val year =
+            calendar.get(Calendar.YEAR)
+
+        val hour =
+            calendar.get(Calendar.HOUR)
+
+        val minute =
+            calendar.get(Calendar.MINUTE)
+
+        val amPm =
+            if (calendar.get(Calendar.AM_PM) == Calendar.AM) {
+                "AM"
+            } else {
+                "PM"
+            }
+
+        val displayHour =
+            if (hour == 0) 12 else hour
 
         return when {
+
             dateRequest && timeRequest ->
                 "আজকের তারিখ: %02d/%02d/%04d\nবর্তমান সময়: %02d:%02d %s"
-                    .format(day, month, year, displayHour, minute, amPm)
+                    .format(
+                        day,
+                        month,
+                        year,
+                        displayHour,
+                        minute,
+                        amPm
+                    )
 
             dateRequest ->
                 "আজকের তারিখ: %02d/%02d/%04d"
-                    .format(day, month, year)
+                    .format(
+                        day,
+                        month,
+                        year
+                    )
 
             else ->
                 "বর্তমান সময়: %02d:%02d %s"
-                    .format(displayHour, minute, amPm)
+                    .format(
+                        displayHour,
+                        minute,
+                        amPm
+                    )
         }
     }
 
@@ -356,69 +418,109 @@ Core Instructions:
         attachmentUriString: String?
     ): Flow<StreamEvent> = flow {
 
-        val userMessageId = UUID.randomUUID().toString()
-        val assistantMessageId = UUID.randomUUID().toString()
-        val now = System.currentTimeMillis()
+        val userMessageId =
+            UUID.randomUUID().toString()
 
-        // 1. Save user message.
-        val userMessage = MessageEntity(
-            id = userMessageId,
-            conversationId = conversationId,
-            role = "user",
-            content = userPrompt,
-            timestamp = now,
-            status = "SENT",
-            attachmentUri = attachmentUriString,
-            attachmentMimeType = attachmentMimeType,
-            attachmentName = attachmentName
-        )
+        val assistantMessageId =
+            UUID.randomUUID().toString()
+
+        val now =
+            System.currentTimeMillis()
+
+        val userMessage =
+            MessageEntity(
+                id = userMessageId,
+                conversationId = conversationId,
+                role = "user",
+                content = userPrompt,
+                timestamp = now,
+                status = "SENT",
+                attachmentUri = attachmentUriString,
+                attachmentMimeType = attachmentMimeType,
+                attachmentName = attachmentName
+            )
 
         messageDao.insertOrUpdate(userMessage)
 
-        // 2. Update conversation title.
-        val conv = conversationDao.getConversationById(conversationId)
+        val conversation =
+            conversationDao.getConversationById(
+                conversationId
+            )
 
-        if (conv != null &&
-            (conv.title == "New Conversation" || conv.title == "New Chat")
+        if (
+            conversation != null &&
+            (
+                conversation.title == "New Conversation" ||
+                        conversation.title == "New Chat"
+                )
         ) {
-            val autoTitle = if (userPrompt.isNotBlank()) {
-                userPrompt.take(30).trim() +
-                        if (userPrompt.length > 30) "..." else ""
-            } else if (!attachmentName.isNullOrBlank()) {
-                attachmentName.take(30)
-            } else {
-                "Conversation"
-            }
+
+            val autoTitle =
+                if (userPrompt.isNotBlank()) {
+
+                    userPrompt
+                        .take(30)
+                        .trim() +
+                            if (userPrompt.length > 30) {
+                                "..."
+                            } else {
+                                ""
+                            }
+
+                } else if (
+                    !attachmentName.isNullOrBlank()
+                ) {
+
+                    attachmentName.take(30)
+
+                } else {
+
+                    "Conversation"
+                }
 
             conversationDao.update(
-                conv.copy(
+                conversation.copy(
                     title = autoTitle,
                     updatedAt = now
                 )
             )
-        } else if (conv != null) {
+
+        } else if (conversation != null) {
+
             conversationDao.update(
-                conv.copy(updatedAt = now)
+                conversation.copy(
+                    updatedAt = now
+                )
             )
         }
 
-        // 3. Answer simple date/time requests locally.
-        val localAnswer = localDateTimeAnswer(userPrompt)
+        val localAnswer =
+            localDateTimeAnswer(userPrompt)
 
-        if (localAnswer != null && attachmentBytes == null) {
-            val localMessage = MessageEntity(
-                id = assistantMessageId,
-                conversationId = conversationId,
-                role = "assistant",
-                content = localAnswer,
-                timestamp = now + 1,
-                status = "SENT"
-            )
+        if (
+            localAnswer != null &&
+            attachmentBytes == null
+        ) {
+
+            val localMessage =
+                MessageEntity(
+                    id = assistantMessageId,
+                    conversationId = conversationId,
+                    role = "assistant",
+                    content = localAnswer,
+                    timestamp = now + 1,
+                    status = "SENT"
+                )
 
             messageDao.insertOrUpdate(localMessage)
 
-            collector@ this.emit(StreamEvent.TextChunk(localAnswer))
-            this.emit(
+            emit(
+                StreamEvent.TextChunk(
+                    localAnswer
+                )
+            )
+
+            emit(
                 StreamEvent.Completed(
                     localAnswer,
                     emptyList()
@@ -428,8 +530,10 @@ Core Instructions:
             return@flow
         }
 
-        // 4. Explicit image generation.
-        if (isImageGenerationRequest(userPrompt)) {
+        if (
+            isImageGenerationRequest(userPrompt)
+        ) {
+
             handleImageGeneration(
                 conversationId = conversationId,
                 assistantMessageId = assistantMessageId,
@@ -440,44 +544,56 @@ Core Instructions:
             return@flow
         }
 
-        // 5. Assistant placeholder.
-        val assistantMessage = MessageEntity(
-            id = assistantMessageId,
-            conversationId = conversationId,
-            role = "assistant",
-            content = "",
-            timestamp = now + 1,
-            status = "SENDING"
+        val assistantMessage =
+            MessageEntity(
+                id = assistantMessageId,
+                conversationId = conversationId,
+                role = "assistant",
+                content = "",
+                timestamp = now + 1,
+                status = "SENDING"
+            )
+
+        messageDao.insertOrUpdate(
+            assistantMessage
         )
 
-        messageDao.insertOrUpdate(assistantMessage)
+        val historyEntities =
+            messageDao
+                .getMessagesList(conversationId)
+                .filter {
+                    it.id != userMessageId &&
+                            it.id != assistantMessageId &&
+                            it.status != "ERROR"
+                }
+                .takeLast(10)
 
-        // 6. Previous history.
-        val historyMessages = messageDao
-            .getMessagesList(conversationId)
-            .filter {
-                it.id != userMessageId &&
-                        it.id != assistantMessageId &&
-                        it.status != "ERROR"
+        val history =
+            historyEntities.map {
+                messageEntityToChatMessage(
+                    conversationId = conversationId,
+                    message = it
+                )
             }
-            .takeLast(10)
 
-        // 7. Build request.
-        val request = buildGeminiRequest(
-            history = historyMessages,
-            currentPrompt = userPrompt,
-            attachmentBytes = attachmentBytes,
-            attachmentMimeType = attachmentMimeType,
-            attachmentName = attachmentName
-        )
+        val attachments =
+            buildAttachments(
+                bytes = attachmentBytes,
+                mimeType = attachmentMimeType,
+                name = attachmentName,
+                uri = attachmentUriString
+            )
 
-        // 8. Streaming response.
-        executeStreamCall(
+        executeOpenAIStream(
             conversationId = conversationId,
             assistantMessageId = assistantMessageId,
-            request = request,
+            prompt = userPrompt,
+            history = history,
+            attachments = attachments,
+            enableSearch = needsWebSearch(userPrompt),
             collector = this
         )
+
     }.flowOn(Dispatchers.IO)
 
     override suspend fun retryMessage(
@@ -485,17 +601,22 @@ Core Instructions:
         failedMessageId: String
     ): Flow<StreamEvent> = flow {
 
-        val failedMsg =
-            messageDao.getMessageById(failedMessageId)
-                ?: return@flow
+        val failedMessage =
+            messageDao.getMessageById(
+                failedMessageId
+            ) ?: return@flow
 
         val messages =
-            messageDao.getMessagesList(conversationId)
+            messageDao.getMessagesList(
+                conversationId
+            )
 
         val failedIndex =
-            messages.indexOfFirst { it.id == failedMessageId }
+            messages.indexOfFirst {
+                it.id == failedMessageId
+            }
 
-        val userMsg =
+        val userMessage =
             if (failedIndex > 0) {
                 messages[failedIndex - 1]
             } else {
@@ -503,760 +624,668 @@ Core Instructions:
             }
 
         val prompt =
-            userMsg?.content ?: "Hello"
+            userMessage?.content ?: "Hello"
 
-        // Restore attachment bytes for retry when possible.
-        val retryAttachmentBytes =
-            if (!userMsg?.attachmentUri.isNullOrBlank()) {
+        val attachmentBytes =
+            if (
+                !userMessage?.attachmentUri.isNullOrBlank()
+            ) {
+
                 try {
+
                     context.contentResolver
                         .openInputStream(
-                            Uri.parse(userMsg?.attachmentUri)
+                            Uri.parse(
+                                userMessage?.attachmentUri
+                            )
                         )
-                        ?.use { it.readBytes() }
+                        ?.use {
+                            it.readBytes()
+                        }
+
                 } catch (_: Exception) {
+
                     null
                 }
+
             } else {
+
                 null
             }
 
         messageDao.insertOrUpdate(
-            failedMsg.copy(
+            failedMessage.copy(
                 content = "",
                 status = "SENDING"
             )
         )
 
-        val historyMessages =
+        val historyEntities =
             if (failedIndex > 0) {
+
                 messages
                     .take(failedIndex - 1)
-                    .filter { it.status != "ERROR" }
+                    .filter {
+                        it.status != "ERROR"
+                    }
                     .takeLast(10)
+
             } else {
+
                 emptyList()
             }
 
-        val request = buildGeminiRequest(
-            history = historyMessages,
-            currentPrompt = prompt,
-            attachmentBytes = retryAttachmentBytes,
-            attachmentMimeType = userMsg?.attachmentMimeType,
-            attachmentName = userMsg?.attachmentName
-        )
+        val history =
+            historyEntities.map {
+                messageEntityToChatMessage(
+                    conversationId = conversationId,
+                    message = it
+                )
+            }
 
-        executeStreamCall(
+        val attachments =
+            buildAttachments(
+                bytes = attachmentBytes,
+                mimeType =
+                    userMessage?.attachmentMimeType,
+                name =
+                    userMessage?.attachmentName,
+                uri =
+                    userMessage?.attachmentUri
+            )
+
+        executeOpenAIStream(
             conversationId = conversationId,
             assistantMessageId = failedMessageId,
-            request = request,
+            prompt = prompt,
+            history = history,
+            attachments = attachments,
+            enableSearch = needsWebSearch(prompt),
             collector = this
         )
+
     }.flowOn(Dispatchers.IO)
 
-    /**
-     * Generate image using Gemini 3.1 Flash Image.
-     *
-     * The generated Base64 image is saved to the app's private storage.
-     * MessageEntity.imageUrl then points to the local image file.
-     *
-     * No database migration is required because imageUrl already exists.
-     */
-    private suspend fun handleImageGeneration(
+    private fun messageEntityToChatMessage(
+        conversationId: String,
+        message: MessageEntity
+    ): ChatMessage {
+
+        val role =
+            when (message.role.lowercase()) {
+
+                "assistant" ->
+                    MessageRole.ASSISTANT
+
+                "system" ->
+                    MessageRole.SYSTEM
+
+                else ->
+                    MessageRole.USER
+            }
+
+        val status =
+            when (message.status) {
+
+                "ERROR" ->
+                    MessageStatus.ERROR
+
+                "SENDING" ->
+                    MessageStatus.SENDING
+
+                else ->
+                    MessageStatus.SENT
+            }
+
+        val attachmentMetadata =
+            if (
+                !message.attachmentName.isNullOrBlank()
+            ) {
+
+                listOf(
+                    AttachmentMetadata(
+                        name =
+                            message.attachmentName,
+                        mimeType =
+                            message.attachmentMimeType
+                                ?: "application/octet-stream",
+                        type =
+                            attachmentTypeFromMime(
+                                message.attachmentMimeType
+                            ),
+                        localUri =
+                            message.attachmentUri
+                    )
+                )
+
+            } else {
+
+                emptyList()
+            }
+
+        return ChatMessage(
+            id = message.id,
+            conversationId = conversationId,
+            role = role,
+            content = message.content,
+            timestamp = message.timestamp,
+            status = status,
+            attachments = attachmentMetadata
+        )
+    }
+
+    private fun buildAttachments(
+        bytes: ByteArray?,
+        mimeType: String?,
+        name: String?,
+        uri: String?
+    ): List<Attachment> {
+
+        if (bytes == null) {
+            return emptyList()
+        }
+
+        val actualMimeType =
+            mimeType
+                ?.takeIf { it.isNotBlank() }
+                ?: "application/octet-stream"
+
+        val actualName =
+            name
+                ?.takeIf { it.isNotBlank() }
+                ?: "attachment"
+
+        val base64 =
+            Base64.encodeToString(
+                bytes,
+                Base64.NO_WRAP
+            )
+
+        val type =
+            attachmentTypeFromMime(
+                actualMimeType
+            )
+
+        val textContent =
+            if (
+                type == AttachmentType.DOCUMENT &&
+                (
+                    actualMimeType.startsWith("text/") ||
+                            actualMimeType.contains("json") ||
+                            actualMimeType.contains("csv") ||
+                            actualMimeType.contains("markdown")
+                    )
+            ) {
+
+                try {
+                    String(
+                        bytes,
+                        Charsets.UTF_8
+                    )
+                } catch (_: Exception) {
+                    null
+                }
+
+            } else {
+
+                null
+            }
+
+        return listOf(
+            Attachment(
+                name = actualName,
+                mimeType = actualMimeType,
+                sizeBytes = bytes.size.toLong(),
+                type = type,
+                localUri = uri,
+                base64Data = base64,
+                textContent = textContent
+            )
+        )
+    }
+
+    private fun attachmentTypeFromMime(
+        mimeType: String?
+    ): AttachmentType {
+
+        val mime =
+            mimeType
+                ?.lowercase()
+                .orEmpty()
+
+        return when {
+
+            mime.startsWith("image/") ->
+                AttachmentType.IMAGE
+
+            mime == "application/pdf" ->
+                AttachmentType.PDF
+
+            else ->
+                AttachmentType.DOCUMENT
+        }
+    }
+
+    private suspend fun executeOpenAIStream(
         conversationId: String,
         assistantMessageId: String,
-        userPrompt: String,
-        collector: kotlinx.coroutines.flow.FlowCollector<StreamEvent>
+        prompt: String,
+        history: List<ChatMessage>,
+        attachments: List<Attachment>,
+        enableSearch: Boolean,
+        collector: FlowCollector<StreamEvent>
     ) {
-        val now = System.currentTimeMillis()
 
-        val placeholder = MessageEntity(
-            id = assistantMessageId,
-            conversationId = conversationId,
-            role = "assistant",
-            content = "Generating your image...",
-            timestamp = now + 1,
-            status = "SENDING",
-            isGeneratedImage = true
-        )
+        val fullText =
+            StringBuilder()
 
-        messageDao.insertOrUpdate(placeholder)
+        var receivedComplete =
+            false
 
         try {
-            val cleanSubject = cleanImagePrompt(userPrompt)
 
-            val result =
-                imageGenerationService
-                    .generateImage(
-                        prompt = cleanSubject,
-                        aspectRatio = "1:1",
-                        imageSize = "1K"
+            val config =
+                AiModelConfig(
+                    modelId = PRIMARY_MODEL,
+                    displayName = "Mayra",
+                    description =
+                        "OpenAI-powered Mayra AI",
+                    temperature = 0.7f,
+                    maxTokens = 8192,
+                    systemPrompt =
+                        SYSTEM_PROMPT
+                )
+
+            openAIService
+                .generateStream(
+                    conversationId =
+                        conversationId,
+                    prompt =
+                        prompt,
+                    history =
+                        history,
+                    config =
+                        config,
+                    attachments =
+                        attachments,
+                    enableSearch =
+                        enableSearch
+                )
+                .collect { chunk: AiStreamChunk ->
+
+                    if (chunk.textDelta.isNotEmpty()) {
+
+                        fullText.append(
+                            chunk.textDelta
+                        )
+
+                        collector.emit(
+                            StreamEvent.TextChunk(
+                                chunk.textDelta
+                            )
+                        )
+
+                        messageDao.insertOrUpdate(
+                            MessageEntity(
+                                id =
+                                    assistantMessageId,
+                                conversationId =
+                                    conversationId,
+                                role =
+                                    "assistant",
+                                content =
+                                    fullText.toString(),
+                                timestamp =
+                                    System.currentTimeMillis(),
+                                status =
+                                    "SENDING"
+                            )
+                        )
+                    }
+
+                    if (chunk.isComplete) {
+                        receivedComplete = true
+                    }
+                }
+
+            val finalText =
+                fullText
+                    .toString()
+                    .trim()
+
+            if (finalText.isEmpty()) {
+
+                val error =
+                    "Mayra AI did not return a response. Please try again."
+
+                messageDao.insertOrUpdate(
+                    MessageEntity(
+                        id =
+                            assistantMessageId,
+                        conversationId =
+                            conversationId,
+                        role =
+                            "assistant",
+                        content =
+                            error,
+                        timestamp =
+                            System.currentTimeMillis(),
+                        status =
+                            "ERROR"
                     )
-                    .getOrThrow()
+                )
 
-            val imageUri = saveGeneratedImage(
-                messageId = assistantMessageId,
-                base64Data = result.base64Data,
-                mimeType = result.mimeType
-            )
+                collector.emit(
+                    StreamEvent.Error(
+                        error,
+                        isRetryable = true
+                    )
+                )
 
-            val textContent =
-                result.text?.takeIf { it.isNotBlank() }
-                    ?: "Here is the generated image."
+                return
+            }
 
-            val finalMessage = placeholder.copy(
-                content = textContent,
-                imageUrl = imageUri,
-                status = "SENT",
-                isGeneratedImage = true
-            )
-
-            messageDao.insertOrUpdate(finalMessage)
-
-            collector.emit(
-                StreamEvent.TextChunk(textContent)
+            messageDao.insertOrUpdate(
+                MessageEntity(
+                    id =
+                        assistantMessageId,
+                    conversationId =
+                        conversationId,
+                    role =
+                        "assistant",
+                    content =
+                        finalText,
+                    timestamp =
+                        System.currentTimeMillis(),
+                    status =
+                        "SENT"
+                )
             )
 
             collector.emit(
                 StreamEvent.Completed(
-                    textContent,
+                    finalText,
                     emptyList()
                 )
             )
 
         } catch (e: Exception) {
 
-            val errorMsg =
-                "Could not generate image: ${
-                    e.message ?: "Unknown error"
-                }"
+            val errorMessage =
+                e.message
+                    ?.takeIf {
+                        it.isNotBlank()
+                    }
+                    ?: "OpenAI service error. Please try again."
 
             messageDao.insertOrUpdate(
-                placeholder.copy(
-                    content = errorMsg,
-                    status = "ERROR"
+                MessageEntity(
+                    id =
+                        assistantMessageId,
+                    conversationId =
+                        conversationId,
+                    role =
+                        "assistant",
+                    content =
+                        errorMessage,
+                    timestamp =
+                        System.currentTimeMillis(),
+                    status =
+                        "ERROR"
                 )
             )
 
             collector.emit(
                 StreamEvent.Error(
-                    errorMsg,
+                    errorMessage,
                     isRetryable = true
                 )
             )
         }
     }
 
-    /**
-     * Remove common image-generation command words.
-     */
-    private fun cleanImagePrompt(prompt: String): String {
+    private suspend fun handleImageGeneration(
+        conversationId: String,
+        assistantMessageId: String,
+        userPrompt: String,
+        collector: FlowCollector<StreamEvent>
+    ) {
 
-        var clean = prompt.trim()
+        val now =
+            System.currentTimeMillis()
 
-        val prefixes = listOf(
-            Regex(
-                "(?i)^generate\\s+(an?\\s+)?(image|picture|photo)\\s*(of)?\\s*"
-            ),
-            Regex(
-                "(?i)^create\\s+(an?\\s+)?(image|picture|photo)\\s*(of)?\\s*"
-            ),
-            Regex(
-                "(?i)^make\\s+(an?\\s+)?(image|picture|photo)\\s*(of)?\\s*"
-            ),
-            Regex(
-                "(?i)^draw\\s+"
-            ),
-            Regex(
-                "(?i)^paint\\s+"
-            ),
-            Regex(
-                "(?i)^generate\\s+"
-            ),
-            Regex(
-                "(?i)^create\\s+"
-            ),
-            Regex(
-                "(?i)^make\\s+"
+        val placeholder =
+            MessageEntity(
+                id =
+                    assistantMessageId,
+                conversationId =
+                    conversationId,
+                role =
+                    "assistant",
+                content =
+                    "Generating your image...",
+                timestamp =
+                    now + 1,
+                status =
+                    "SENDING",
+                isGeneratedImage =
+                    true
             )
+
+        messageDao.insertOrUpdate(
+            placeholder
         )
 
+        try {
+
+            val cleanPrompt =
+                cleanImagePrompt(
+                    userPrompt
+                )
+
+            val result =
+                imageGenerationService
+                    .generateImage(
+                        prompt =
+                            cleanPrompt,
+                        aspectRatio =
+                            "1:1",
+                        imageSize =
+                            "1K"
+                    )
+                    .getOrThrow()
+
+            val imageUri =
+                saveGeneratedImage(
+                    messageId =
+                        assistantMessageId,
+                    base64Data =
+                        result.base64Data,
+                    mimeType =
+                        result.mimeType
+                )
+
+            val text =
+                result.text
+                    ?.takeIf {
+                        it.isNotBlank()
+                    }
+                    ?: "Here is the generated image."
+
+            messageDao.insertOrUpdate(
+                placeholder.copy(
+                    content =
+                        text,
+                    imageUrl =
+                        imageUri,
+                    status =
+                        "SENT",
+                    isGeneratedImage =
+                        true
+                )
+            )
+
+            collector.emit(
+                StreamEvent.TextChunk(
+                    text
+                )
+            )
+
+            collector.emit(
+                StreamEvent.Completed(
+                    text,
+                    emptyList()
+                )
+            )
+
+        } catch (e: Exception) {
+
+            val error =
+                "Could not generate image: ${
+                    e.message ?: "Unknown error"
+                }"
+
+            messageDao.insertOrUpdate(
+                placeholder.copy(
+                    content =
+                        error,
+                    status =
+                        "ERROR"
+                )
+            )
+
+            collector.emit(
+                StreamEvent.Error(
+                    error,
+                    isRetryable = true
+                )
+            )
+        }
+    }
+
+    private fun cleanImagePrompt(
+        prompt: String
+    ): String {
+
+        var clean =
+            prompt.trim()
+
+        val prefixes =
+            listOf(
+
+                Regex(
+                    "(?i)^generate\\s+(an?\\s+)?(image|picture|photo)\\s*(of)?\\s*"
+                ),
+
+                Regex(
+                    "(?i)^create\\s+(an?\\s+)?(image|picture|photo)\\s*(of)?\\s*"
+                ),
+
+                Regex(
+                    "(?i)^make\\s+(an?\\s+)?(image|picture|photo)\\s*(of)?\\s*"
+                ),
+
+                Regex(
+                    "(?i)^draw\\s+"
+                ),
+
+                Regex(
+                    "(?i)^paint\\s+"
+                ),
+
+                Regex(
+                    "(?i)^generate\\s+"
+                ),
+
+                Regex(
+                    "(?i)^create\\s+"
+                ),
+
+                Regex(
+                    "(?i)^make\\s+"
+                )
+            )
+
         for (regex in prefixes) {
-            clean = clean.replaceFirst(regex, "")
+            clean =
+                clean.replaceFirst(
+                    regex,
+                    ""
+                )
         }
 
-        clean = clean
-            .replaceFirst(
-                Regex("^ছবি\\s*(তৈরি কর|বানাও|আঁকো)\\s*"),
-                ""
-            )
-            .replaceFirst(
-                Regex("^ইমেজ\\s*(তৈরি কর|বানাও)\\s*"),
-                ""
-            )
-            .replaceFirst(
-                Regex("^তस्वीर\\s*बनाओ\\s*"),
-                ""
-            )
-            .replaceFirst(
-                Regex("^तस्वीर\\s*बनाओ\\s*"),
-                ""
-            )
-            .trim()
+        clean =
+            clean
+                .replaceFirst(
+                    Regex(
+                        "^ছবি\\s*(তৈরি কর|বানাও|আঁকো)\\s*"
+                    ),
+                    ""
+                )
+                .replaceFirst(
+                    Regex(
+                        "^ইমেজ\\s*(তৈরি কর|বানাও)\\s*"
+                    ),
+                    ""
+                )
+                .replaceFirst(
+                    Regex(
+                        "^तस्वीर\\s*बनाओ\\s*"
+                    ),
+                    ""
+                )
+                .trim()
 
         return clean.ifBlank {
             "A beautiful cinematic scene"
         }
     }
 
-    /**
-     * Save generated Base64 image to private app storage.
-     */
     private suspend fun saveGeneratedImage(
         messageId: String,
         base64Data: String,
         mimeType: String
-    ): String = withContext(Dispatchers.IO) {
+    ): String =
+        withContext(Dispatchers.IO) {
 
-        val directory =
-            File(
-                context.filesDir,
-                "generated_images"
-            )
+            val directory =
+                File(
+                    context.filesDir,
+                    "generated_images"
+                )
 
-        if (!directory.exists()) {
-            directory.mkdirs()
+            if (!directory.exists()) {
+                directory.mkdirs()
+            }
+
+            val extension =
+                when {
+
+                    mimeType.contains("jpeg") ||
+                            mimeType.contains("jpg") ->
+                        "jpg"
+
+                    mimeType.contains("webp") ->
+                        "webp"
+
+                    else ->
+                        "png"
+                }
+
+            val file =
+                File(
+                    directory,
+                    "$messageId.$extension"
+                )
+
+            val bytes =
+                Base64.decode(
+                    base64Data,
+                    Base64.DEFAULT
+                )
+
+            file.writeBytes(bytes)
+
+            Uri.fromFile(file).toString()
         }
-
-        val extension =
-            when {
-                mimeType.contains("jpeg") ||
-                        mimeType.contains("jpg") -> "jpg"
-
-                mimeType.contains("webp") -> "webp"
-
-                else -> "png"
-            }
-
-        val file =
-            File(
-                directory,
-                "$messageId.$extension"
-            )
-
-        val imageBytes =
-            Base64.decode(
-                base64Data,
-                Base64.DEFAULT
-            )
-
-        file.writeBytes(imageBytes)
-
-        Uri.fromFile(file).toString()
-    }
-
-    private fun buildGeminiRequest(
-        history: List<MessageEntity>,
-        currentPrompt: String,
-        attachmentBytes: ByteArray?,
-        attachmentMimeType: String?,
-        attachmentName: String?
-    ): GenerateContentRequest {
-
-        val contents =
-            mutableListOf<Content>()
-
-        // History.
-        for (msg in history) {
-
-            val role =
-                if (msg.role == "user") {
-                    "user"
-                } else {
-                    "model"
-                }
-
-            if (msg.content.isNotBlank()) {
-                contents.add(
-                    Content(
-                        role = role,
-                        parts = listOf(
-                            Part(text = msg.content)
-                        )
-                    )
-                )
-            }
-        }
-
-        // Current user message.
-        val currentParts =
-            mutableListOf<Part>()
-
-        var textContent =
-            currentPrompt
-
-        if (
-            attachmentBytes != null &&
-            attachmentMimeType != null
-        ) {
-
-            if (attachmentMimeType.startsWith("image/")) {
-
-                val base64Data =
-                    Base64.encodeToString(
-                        attachmentBytes,
-                        Base64.NO_WRAP
-                    )
-
-                currentParts.add(
-                    Part(
-                        inlineData = InlineData(
-                            mimeType = attachmentMimeType,
-                            data = base64Data
-                        )
-                    )
-                )
-
-            } else if (
-                attachmentMimeType == "application/pdf"
-            ) {
-
-                val base64Data =
-                    Base64.encodeToString(
-                        attachmentBytes,
-                        Base64.NO_WRAP
-                    )
-
-                currentParts.add(
-                    Part(
-                        inlineData = InlineData(
-                            mimeType = "application/pdf",
-                            data = base64Data
-                        )
-                    )
-                )
-
-            } else if (
-                attachmentMimeType.startsWith("text/") ||
-                attachmentMimeType.contains("json") ||
-                attachmentMimeType.contains("csv") ||
-                attachmentMimeType.contains("markdown")
-            ) {
-
-                val fileText =
-                    String(
-                        attachmentBytes,
-                        Charsets.UTF_8
-                    )
-
-                val header =
-                    if (!attachmentName.isNullOrBlank()) {
-                        "--- Attached File: $attachmentName ---\n"
-                    } else {
-                        ""
-                    }
-
-                textContent =
-                    "$header$fileText\n\n$currentPrompt"
-            }
-        }
-
-        if (textContent.isNotBlank()) {
-
-            currentParts.add(
-                Part(text = textContent)
-            )
-
-        } else if (currentParts.isEmpty()) {
-
-            currentParts.add(
-                Part(text = "Hello!")
-            )
-        }
-
-        contents.add(
-            Content(
-                role = "user",
-                parts = currentParts
-            )
-        )
-
-        // Current web-search detection.
-        val tools: List<JsonObject>? =
-            if (needsWebSearch(currentPrompt)) {
-                listOf(
-                    buildJsonObject {
-                        putJsonObject("googleSearch") {}
-                    }
-                )
-            } else {
-                null
-            }
-
-        return GenerateContentRequest(
-            contents = contents,
-
-            generationConfig =
-                GenerationConfig(
-                    temperature = 0.7f,
-                    topP = 0.95f,
-                    thinkingConfig =
-                        ThinkingConfig(
-                            thinkingLevel = "low"
-                        )
-                ),
-
-            tools = tools,
-
-            systemInstruction =
-                Content(
-                    parts = listOf(
-                        Part(
-                            text = SYSTEM_PROMPT
-                        )
-                    )
-                )
-        )
-    }
-
-    private suspend fun executeStreamCall(
-        conversationId: String,
-        assistantMessageId: String,
-        request: GenerateContentRequest,
-        collector: kotlinx.coroutines.flow.FlowCollector<StreamEvent>
-    ) {
-
-        val apiKey =
-            BuildConfig.GEMINI_API_KEY
-
-        val fullTextBuilder =
-            StringBuilder()
-
-        val discoveredSources =
-            mutableListOf<WebSourceCitation>()
-
-        val maxAttempts = 3
-        var currentAttempt = 0
-        var backoffMs = 1000L
-
-        var lastErrorMessage =
-            "An unexpected error occurred."
-
-        while (
-            currentAttempt < maxAttempts
-        ) {
-
-            currentAttempt++
-
-            try {
-
-                if (apiKey.isBlank()) {
-
-                    val demoResponse =
-                        "Mayra AI is ready, but the Gemini API key is not configured."
-
-                    messageDao.insertOrUpdate(
-                        MessageEntity(
-                            id = assistantMessageId,
-                            conversationId = conversationId,
-                            role = "assistant",
-                            content = demoResponse,
-                            timestamp = System.currentTimeMillis(),
-                            status = "SENT"
-                        )
-                    )
-
-                    collector.emit(
-                        StreamEvent.TextChunk(
-                            demoResponse
-                        )
-                    )
-
-                    collector.emit(
-                        StreamEvent.Completed(
-                            demoResponse,
-                            emptyList()
-                        )
-                    )
-
-                    return
-                }
-
-                val responseBody =
-                    geminiService.streamGenerateContent(
-                        model = PRIMARY_MODEL,
-                        apiKey = apiKey,
-                        request = request
-                    )
-
-                responseBody
-                    .byteStream()
-                    .bufferedReader()
-                    .use { reader ->
-
-                        var line: String?
-
-                        while (
-                            reader.readLine()
-                                .also { line = it } != null
-                        ) {
-
-                            val rawLine =
-                                line?.trim()
-                                    ?: continue
-
-                            if (!rawLine.startsWith("data:")) {
-                                continue
-                            }
-
-                            val jsonPayload =
-                                rawLine
-                                    .removePrefix("data:")
-                                    .trim()
-
-                            if (
-                                jsonPayload.isEmpty() ||
-                                jsonPayload == "[DONE]"
-                            ) {
-                                continue
-                            }
-
-                            try {
-
-                                val candidate =
-                                    RetrofitClient.json
-                                        .decodeFromString<CandidateContainer>(
-                                            jsonPayload
-                                        )
-
-                                val firstCandidate =
-                                    candidate
-                                        .candidates
-                                        ?.firstOrNull()
-
-                                val partText =
-                                    firstCandidate
-                                        ?.content
-                                        ?.parts
-                                        ?.firstOrNull()
-                                        ?.text
-
-                                if (!partText.isNullOrEmpty()) {
-
-                                    fullTextBuilder.append(
-                                        partText
-                                    )
-
-                                    collector.emit(
-                                        StreamEvent.TextChunk(
-                                            partText
-                                        )
-                                    )
-
-                                    messageDao.insertOrUpdate(
-                                        MessageEntity(
-                                            id = assistantMessageId,
-                                            conversationId = conversationId,
-                                            role = "assistant",
-                                            content =
-                                                fullTextBuilder.toString(),
-                                            timestamp =
-                                                System.currentTimeMillis(),
-                                            status = "SENDING"
-                                        )
-                                    )
-                                }
-
-                                // Grounding sources.
-                                val chunks =
-                                    firstCandidate
-                                        ?.groundingMetadata
-                                        ?.groundingChunks
-
-                                if (chunks != null) {
-
-                                    for (chunk in chunks) {
-
-                                        val uri =
-                                            chunk.web?.uri
-
-                                        val title =
-                                            chunk.web?.title
-                                                ?: uri
-
-                                        if (
-                                            !uri.isNullOrBlank() &&
-                                            !title.isNullOrBlank()
-                                        ) {
-
-                                            val citation =
-                                                WebSourceCitation(
-                                                    title = title,
-                                                    url = uri
-                                                )
-
-                                            if (
-                                                discoveredSources
-                                                    .none {
-                                                        it.url == uri
-                                                    }
-                                            ) {
-                                                discoveredSources.add(
-                                                    citation
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    if (
-                                        discoveredSources.isNotEmpty()
-                                    ) {
-                                        collector.emit(
-                                            StreamEvent.SourcesDiscovered(
-                                                discoveredSources
-                                            )
-                                        )
-                                    }
-                                }
-
-                            } catch (_: Exception) {
-                                // Ignore malformed individual SSE chunks.
-                            }
-                        }
-                    }
-
-                val finalText =
-                    fullTextBuilder
-                        .toString()
-                        .ifBlank {
-                            "I received your request but didn't generate any text. Please try again."
-                        }
-
-                val sourcesJson =
-                    if (
-                        discoveredSources.isNotEmpty()
-                    ) {
-                        RetrofitClient.json.encodeToString(
-                            discoveredSources
-                        )
-                    } else {
-                        null
-                    }
-
-                messageDao.insertOrUpdate(
-                    MessageEntity(
-                        id = assistantMessageId,
-                        conversationId = conversationId,
-                        role = "assistant",
-                        content = finalText,
-                        timestamp = System.currentTimeMillis(),
-                        status = "SENT",
-                        sourcesJson = sourcesJson
-                    )
-                )
-
-                collector.emit(
-                    StreamEvent.Completed(
-                        finalText,
-                        discoveredSources
-                    )
-                )
-
-                return
-
-            } catch (httpEx: HttpException) {
-
-                val code =
-                    httpEx.code()
-
-                lastErrorMessage =
-                    "API error ($code): ${httpEx.message()}"
-
-                // IMPORTANT:
-                // If text has already arrived, do not retry,
-                // otherwise the answer can be duplicated.
-                if (fullTextBuilder.isNotEmpty()) {
-                    break
-                }
-
-                if (
-                    code == 429 ||
-                    code >= 500
-                ) {
-
-                    if (
-                        currentAttempt < maxAttempts
-                    ) {
-
-                        delay(backoffMs)
-                        backoffMs *= 2
-                        continue
-                    }
-
-                } else {
-                    break
-                }
-
-            } catch (ioEx: IOException) {
-
-                lastErrorMessage =
-                    "Network connection failed. Please check your internet connection."
-
-                // Do not restart a partially streamed answer.
-                if (fullTextBuilder.isNotEmpty()) {
-                    break
-                }
-
-                if (
-                    currentAttempt < maxAttempts
-                ) {
-
-                    delay(backoffMs)
-                    backoffMs *= 2
-                    continue
-                }
-
-            } catch (e: Exception) {
-
-                lastErrorMessage =
-                    e.message
-                        ?: "An unexpected error occurred."
-
-                break
-            }
-        }
-
-        val fallbackText =
-            fullTextBuilder.toString()
-
-        val errorText =
-            if (fallbackText.isNotBlank()) {
-                "$fallbackText\n\n⚠️ $lastErrorMessage"
-            } else {
-                "⚠️ $lastErrorMessage"
-            }
-
-        messageDao.insertOrUpdate(
-            MessageEntity(
-                id = assistantMessageId,
-                conversationId = conversationId,
-                role = "assistant",
-                content = errorText,
-                timestamp = System.currentTimeMillis(),
-                status = "ERROR"
-            )
-        )
-
-        collector.emit(
-            StreamEvent.Error(
-                lastErrorMessage,
-                isRetryable = true
-            )
-        )
-    }
 }
-
-@kotlinx.serialization.Serializable
-private data class CandidateContainer(
-    val candidates: List<Candidate>? = null
-)
