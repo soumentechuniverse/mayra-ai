@@ -1,23 +1,9 @@
-import java.util.Properties
-
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
 }
-
-val envFile = rootProject.file(".env")
-val envProperties = Properties().apply {
-    if (envFile.exists()) {
-        envFile.inputStream().use { load(it) }
-    }
-}
-
-val openAiApiKey = envProperties.getProperty("OPENAI_API_KEY")
-    ?: System.getenv("OPENAI_API_KEY")
-    ?: (project.findProperty("OPENAI_API_KEY") as? String)
-    ?: ""
 
 android {
     namespace = "com.example"
@@ -30,20 +16,18 @@ android {
         versionCode = 1
         versionName = "1.0"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-
-        buildConfigField(
-            "String",
-            "OPENAI_API_KEY",
-            "\"$openAiApiKey\""
-        )
+        testInstrumentationRunner =
+            "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+
             proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
+                getDefaultProguardFile(
+                    "proguard-android-optimize.txt"
+                ),
                 "proguard-rules.pro"
             )
         }
@@ -60,7 +44,6 @@ android {
 
     buildFeatures {
         compose = true
-        buildConfig = true
     }
 
     testOptions {
@@ -71,6 +54,7 @@ android {
 }
 
 dependencies {
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
@@ -92,7 +76,9 @@ dependencies {
 
     // Networking
     implementation(libs.retrofit)
-    implementation(libs.retrofit.converter.kotlinx.serialization)
+    implementation(
+        libs.retrofit.converter.kotlinx.serialization
+    )
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)
     implementation(libs.kotlinx.serialization.json)
@@ -102,19 +88,33 @@ dependencies {
 
     // CommonMark
     implementation(libs.commonmark)
-    implementation(libs.commonmark.ext.gfm.tables)
-    implementation(libs.commonmark.ext.gfm.strikethrough)
-    implementation(libs.commonmark.ext.autolink)
+    implementation(
+        libs.commonmark.ext.gfm.tables
+    )
+    implementation(
+        libs.commonmark.ext.gfm.strikethrough
+    )
+    implementation(
+        libs.commonmark.ext.autolink
+    )
 
     // Tests
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.junit)
-    testImplementation(libs.androidx.espresso.core)
-    testImplementation(platform(libs.androidx.compose.bom))
-    testImplementation(libs.androidx.ui.test.junit4)
+    testImplementation(
+        libs.androidx.espresso.core
+    )
+    testImplementation(
+        platform(libs.androidx.compose.bom)
+    )
+    testImplementation(
+        libs.androidx.ui.test.junit4
+    )
 
     // Debug
     debugImplementation(libs.androidx.ui.tooling)
-    debugImplementation(libs.androidx.ui.test.manifest)
+    debugImplementation(
+        libs.androidx.ui.test.manifest
+    )
 }
