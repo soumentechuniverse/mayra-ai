@@ -17,22 +17,21 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
- * Mayra AI - Gemini Image Generation Service
+ * Mayra AI - OpenAI Image Generation Service
  *
- * Uses Google's Gemini 3.1 Flash Image model.
+ * Uses OpenAI Responses API image_generation tool.
  *
  * Supports:
- * - AI image generation
+ * - Image generation
  * - Image editing
- * - Image transformation
- * - Image-to-image generation
  * - Multiple input images
- * - Aspect ratio selection
- * - 1K / 2K / 4K output
+ * - Aspect ratio
+ * - Image size
+ * - Base64 output
  */
 class ImageGenerationService(
     private val apiKeyProvider: () -> String = {
-        BuildConfig.GEMINI_API_KEY
+        BuildConfig.OPENAI_API_KEY
     },
     private val client: OkHttpClient = createDefaultClient()
 ) {
@@ -40,77 +39,51 @@ class ImageGenerationService(
     companion object {
 
         private const val ENDPOINT =
-            "https://generativelanguage.googleapis.com/v1beta/interactions"
+            "https://api.openai.com/v1/responses"
 
         private const val MODEL =
-            "gemini-3.1-flash-image"
-
-        private const val PLACEHOLDER_KEY =
-            "MY_GEMINI_API_KEY"
+            "gpt-image-1"
 
         private val JSON_MEDIA_TYPE =
             "application/json; charset=utf-8".toMediaType()
 
         private fun createDefaultClient(): OkHttpClient {
             return OkHttpClient.Builder()
-                .connectTimeout(
-                    20,
-                    TimeUnit.SECONDS
-                )
-                .readTimeout(
-                    180,
-                    TimeUnit.SECONDS
-                )
-                .writeTimeout(
-                    60,
-                    TimeUnit.SECONDS
-                )
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .readTimeout(180, TimeUnit.SECONDS)
+                .writeTimeout(120, TimeUnit.SECONDS)
                 .retryOnConnectionFailure(true)
                 .build()
         }
     }
-
-    // ========================================================================
-    // RESULT
-    // ========================================================================
 
     data class ImageResult(
         val base64Data: String,
         val mimeType: String = "image/png",
         val text: String? = null
     ) {
-
-        /**
-         * Convert generated Base64 image into Android Bitmap.
-         */
         fun toBitmap(): Bitmap? {
-
             return try {
-
-                val bytes =
-                    Base64.decode(
-                        base64Data,
-                        Base64.DEFAULT
-                    )
+                val bytes = Base64.decode(
+                    base64Data,
+                    Base64.DEFAULT
+                )
 
                 BitmapFactory.decodeByteArray(
                     bytes,
                     0,
                     bytes.size
                 )
-
-            } catch (
-                _: Exception
-            ) {
-
+            } catch (_: Exception) {
                 null
             }
         }
     }
 
-    // ========================================================================
-    // GENERATE IMAGE
-    // ========================================================================
+    data class InputImage(
+        val base64Data: String,
+        val mimeType: String = "image/jpeg"
+    )
 
     suspend fun generateImage(
         prompt: String,
@@ -125,10 +98,6 @@ class ImageGenerationService(
             imageSize = imageSize
         )
     }
-
-    // ========================================================================
-    // EDIT IMAGE
-    // ========================================================================
 
     suspend fun editImage(
         prompt: String,
@@ -151,10 +120,6 @@ class ImageGenerationService(
         )
     }
 
-    // ========================================================================
-    // EDIT MULTIPLE IMAGES
-    // ========================================================================
-
     suspend fun editImages(
         prompt: String,
         images: List<InputImage>,
@@ -163,7 +128,6 @@ class ImageGenerationService(
     ): Result<ImageResult> {
 
         if (images.isEmpty()) {
-
             return Result.failure(
                 IllegalArgumentException(
                     "At least one image is required."
@@ -179,61 +143,30 @@ class ImageGenerationService(
         )
     }
 
-    // ========================================================================
-    // INPUT IMAGE
-    // ========================================================================
-
-    data class InputImage(
-        val base64Data: String,
-        val mimeType: String = "image/jpeg"
-    )
-
-    // ========================================================================
-    // CORE REQUEST
-    // ========================================================================
-
     private suspend fun generateInternal(
         prompt: String,
         inputImages: List<InputImage>,
         aspectRatio: String,
         imageSize: String
-    ): Result<ImageResult> = withContext(
-        Dispatchers.IO
-    ) {
+    ): Result<ImageResult> = withContext(Dispatchers.IO) {
 
         try {
 
-            val apiKey =
-                apiKeyProvider()
-                    .trim()
-                    .removeSurrounding("\"")
+            val apiKey = apiKeyProvider()
+                .trim()
+                .removeSurrounding("\"")
 
-            // ------------------------------------------------------------
-            // API KEY
-            // ------------------------------------------------------------
-
-            if (
-                apiKey.isEmpty() ||
-                apiKey == PLACEHOLDER_KEY ||
-                apiKey.length <= 10
-            ) {
-
+            if (apiKey.isEmpty()) {
                 return@withContext Result.failure(
                     IllegalStateException(
-                        "Gemini API key is not configured."
+                        "OpenAI API key is not configured."
                     )
                 )
             }
 
-            // ------------------------------------------------------------
-            // PROMPT
-            // ------------------------------------------------------------
-
-            val cleanPrompt =
-                prompt.trim()
+            val cleanPrompt = prompt.trim()
 
             if (cleanPrompt.isEmpty()) {
-
                 return@withContext Result.failure(
                     IllegalArgumentException(
                         "Image prompt cannot be empty."
@@ -241,125 +174,98 @@ class ImageGenerationService(
                 )
             }
 
-            // ------------------------------------------------------------
-            // VALIDATE SIZE
-            // ------------------------------------------------------------
+            val size = convertImageSize(
+                aspectRatio = aspectRatio,
+                imageSize = imageSize
+            )
 
-            val validSize =
-                when (imageSize.uppercase()) {
+            val inputContent = JSONArray()
 
-                    "512" -> "512"
+            inputContent.put(
+                JSONObject()
+                    .put("type", "input_text")
+                    .put("text", cleanPrompt)
+            )
 
-                    "1K" -> "1K"
+            for (image in inputImages) {
 
-                    "2K" -> "2K"
-
-                    "4K" -> "4K"
-
-                    else -> "1K"
+                if (image.base64Data.isBlank()) {
+                    continue
                 }
 
-            // ------------------------------------------------------------
-            // VALIDATE ASPECT RATIO
-            // ------------------------------------------------------------
+                val mimeType =
+                    normalizeMimeType(image.mimeType)
 
-            val validAspectRatio =
-                when (aspectRatio) {
+                inputContent.put(
+                    JSONObject()
+                        .put("type", "input_image")
+                        .put(
+                            "image_url",
+                            "data:$mimeType;base64,${image.base64Data}"
+                        )
+                )
+            }
 
-                    "1:1",
-                    "1:4",
-                    "1:8",
-                    "2:3",
-                    "3:2",
-                    "3:4",
-                    "4:1",
-                    "4:3",
-                    "4:5",
-                    "5:4",
-                    "8:1",
-                    "9:16",
-                    "16:9",
-                    "21:9" -> aspectRatio
-
-                    else -> "1:1"
-                }
-
-            // ------------------------------------------------------------
-            // REQUEST INPUT
-            // ------------------------------------------------------------
+            val userMessage =
+                JSONObject()
+                    .put("role", "user")
+                    .put("content", inputContent)
 
             val input =
-                if (inputImages.isEmpty()) {
+                JSONArray().put(userMessage)
 
-                    JSONObject().apply {
+            val imageTool =
+                JSONObject()
+                    .put(
+                        "type",
+                        "image_generation"
+                    )
+                    .put(
+                        "model",
+                        MODEL
+                    )
+                    .put(
+                        "size",
+                        size
+                    )
+                    .put(
+                        "quality",
+                        "auto"
+                    )
+                    .put(
+                        "output_format",
+                        "png"
+                    )
+                    .put(
+                        "action",
+                        if (inputImages.isEmpty()) {
+                            "generate"
+                        } else {
+                            "edit"
+                        }
+                    )
 
-                        put(
-                            "model",
-                            MODEL
-                        )
-
-                        put(
-                            "input",
-                            cleanPrompt
-                        )
-
-                        put(
-                            "response_format",
-                            buildImageResponseFormat(
-                                aspectRatio =
-                                    validAspectRatio,
-                                imageSize =
-                                    validSize
-                            )
-                        )
-                    }
-
-                } else {
-
-                    JSONObject().apply {
-
-                        put(
-                            "model",
-                            MODEL
-                        )
-
-                        put(
-                            "input",
-                            buildMultimodalInput(
-                                prompt = cleanPrompt,
-                                images = inputImages
-                            )
-                        )
-
-                        put(
-                            "response_format",
-                            buildImageResponseFormat(
-                                aspectRatio =
-                                    validAspectRatio,
-                                imageSize =
-                                    validSize
-                            )
-                        )
-                    }
-                }
-
-            // ------------------------------------------------------------
-            // HTTP REQUEST
-            // ------------------------------------------------------------
+            val requestJson =
+                JSONObject()
+                    .put(
+                        "model",
+                        "gpt-5"
+                    )
+                    .put(
+                        "input",
+                        input
+                    )
+                    .put(
+                        "tools",
+                        JSONArray().put(imageTool)
+                    )
 
             val request =
                 Request.Builder()
                     .url(ENDPOINT)
-                    .post(
-                        input
-                            .toString()
-                            .toRequestBody(
-                                JSON_MEDIA_TYPE
-                            )
-                    )
                     .header(
-                        "x-goog-api-key",
-                        apiKey
+                        "Authorization",
+                        "Bearer $apiKey"
                     )
                     .header(
                         "Content-Type",
@@ -369,87 +275,69 @@ class ImageGenerationService(
                         "Accept",
                         "application/json"
                     )
+                    .post(
+                        requestJson
+                            .toString()
+                            .toRequestBody(
+                                JSON_MEDIA_TYPE
+                            )
+                    )
                     .build()
 
-            // ------------------------------------------------------------
-            // EXECUTE
-            // ------------------------------------------------------------
+            client.newCall(request)
+                .execute()
+                .use { response ->
 
-            client.newCall(
-                request
-            ).execute().use { response ->
+                    val body =
+                        response.body
+                            ?.string()
+                            .orEmpty()
 
-                val responseBody =
-                    response.body?.string()
-                        .orEmpty()
+                    if (!response.isSuccessful) {
 
-                // --------------------------------------------------------
-                // HTTP ERROR
-                // --------------------------------------------------------
+                        val message =
+                            extractErrorMessage(body)
 
-                if (!response.isSuccessful) {
-
-                    val message =
-                        extractErrorMessage(
-                            responseBody
+                        return@withContext Result.failure(
+                            ImageGenerationException(
+                                statusCode =
+                                    response.code,
+                                message =
+                                    message
+                                        ?: friendlyError(
+                                            response.code
+                                        )
+                            )
                         )
+                    }
 
-                    return@withContext Result.failure(
-                        ImageGenerationException(
-                            statusCode =
-                                response.code,
-                            message =
-                                message
-                                    ?: friendlyError(
-                                        response.code
-                                    )
+                    if (body.isBlank()) {
+                        return@withContext Result.failure(
+                            ImageGenerationException(
+                                statusCode = 0,
+                                message =
+                                    "OpenAI returned an empty image response."
+                            )
                         )
-                    )
+                    }
+
+                    val result =
+                        parseImageResponse(body)
+
+                    if (result == null) {
+                        return@withContext Result.failure(
+                            ImageGenerationException(
+                                statusCode = 0,
+                                message =
+                                    "OpenAI did not return a generated image."
+                            )
+                        )
+                    }
+
+                    Result.success(result)
                 }
 
-                // --------------------------------------------------------
-                // EMPTY RESPONSE
-                // --------------------------------------------------------
-
-                if (responseBody.isBlank()) {
-
-                    return@withContext Result.failure(
-                        ImageGenerationException(
-                            statusCode = 0,
-                            message =
-                                "Gemini returned an empty image response."
-                        )
-                    )
-                }
-
-                // --------------------------------------------------------
-                // PARSE IMAGE
-                // --------------------------------------------------------
-
-                val result =
-                    parseImageResponse(
-                        responseBody
-                    )
-
-                if (result == null) {
-
-                    return@withContext Result.failure(
-                        ImageGenerationException(
-                            statusCode = 0,
-                            message =
-                                "Gemini did not return a generated image."
-                        )
-                    )
-                }
-
-                Result.success(
-                    result
-                )
-            }
-
-        } catch (
-            e: IOException
-        ) {
+        } catch (e: IOException) {
 
             Result.failure(
                 ImageGenerationException(
@@ -460,119 +348,51 @@ class ImageGenerationService(
                 )
             )
 
-        } catch (
-            e: Exception
-        ) {
+        } catch (e: Exception) {
 
             Result.failure(e)
         }
     }
 
-    // ========================================================================
-    // RESPONSE FORMAT
-    // ========================================================================
-
-    private fun buildImageResponseFormat(
+    private fun convertImageSize(
         aspectRatio: String,
         imageSize: String
-    ): JSONObject {
+    ): String {
 
-        return JSONObject().apply {
+        val ratio = aspectRatio.trim()
 
-            put(
-                "type",
-                "image"
-            )
+        val size = imageSize.uppercase()
 
-            put(
-                "mime_type",
-                "image/png"
-            )
+        return when (ratio) {
 
-            put(
-                "aspect_ratio",
-                aspectRatio
-            )
+            "1:1" -> "1024x1024"
 
-            put(
-                "image_size",
-                imageSize
-            )
-        }
-    }
-
-    // ========================================================================
-    // MULTIMODAL INPUT
-    // ========================================================================
-
-    private fun buildMultimodalInput(
-        prompt: String,
-        images: List<InputImage>
-    ): JSONArray {
-
-        val input =
-            JSONArray()
-
-        // ------------------------------------------------------------
-        // TEXT
-        // ------------------------------------------------------------
-
-        input.put(
-            JSONObject().apply {
-
-                put(
-                    "type",
-                    "text"
-                )
-
-                put(
-                    "text",
-                    prompt
-                )
-            }
-        )
-
-        // ------------------------------------------------------------
-        // IMAGES
-        // ------------------------------------------------------------
-
-        for (image in images) {
-
-            if (
-                image.base64Data.isBlank()
-            ) {
-                continue
-            }
-
-            input.put(
-                JSONObject().apply {
-
-                    put(
-                        "type",
-                        "image"
-                    )
-
-                    put(
-                        "mime_type",
-                        normalizeMimeType(
-                            image.mimeType
-                        )
-                    )
-
-                    put(
-                        "data",
-                        image.base64Data
-                    )
+            "16:9" ->
+                if (size == "2K" || size == "4K") {
+                    "1536x1024"
+                } else {
+                    "1536x1024"
                 }
-            )
+
+            "9:16" ->
+                "1024x1536"
+
+            "4:3" ->
+                "1536x1024"
+
+            "3:4" ->
+                "1024x1536"
+
+            "3:2" ->
+                "1536x1024"
+
+            "2:3" ->
+                "1024x1536"
+
+            else ->
+                "1024x1024"
         }
-
-        return input
     }
-
-    // ========================================================================
-    // PARSE RESPONSE
-    // ========================================================================
 
     private fun parseImageResponse(
         responseBody: String
@@ -583,34 +403,43 @@ class ImageGenerationService(
             val root =
                 JSONObject(responseBody)
 
-            // ------------------------------------------------------------
-            // CURRENT INTERACTIONS API FORMAT
-            // ------------------------------------------------------------
+            val output =
+                root.optJSONArray("output")
+                    ?: return null
 
-            val outputImage =
-                root.optJSONObject(
-                    "output_image"
-                )
+            for (i in 0 until output.length()) {
 
-            if (outputImage != null) {
+                val item =
+                    output.optJSONObject(i)
+                        ?: continue
 
-                val data =
-                    outputImage.optString(
-                        "data",
+                if (
+                    item.optString("type")
+                        != "image_generation_call"
+                ) {
+                    continue
+                }
+
+                val status =
+                    item.optString(
+                        "status",
                         ""
                     )
 
-                val mimeType =
-                    outputImage.optString(
-                        "mime_type",
-                        "image/png"
+                val result =
+                    item.optString(
+                        "result",
+                        ""
                     )
 
-                if (data.isNotBlank()) {
+                if (
+                    status == "completed" &&
+                    result.isNotBlank()
+                ) {
 
                     return ImageResult(
-                        base64Data = data,
-                        mimeType = mimeType,
+                        base64Data = result,
+                        mimeType = "image/png",
                         text =
                             root.optString(
                                 "output_text",
@@ -620,166 +449,13 @@ class ImageGenerationService(
                 }
             }
 
-            // ------------------------------------------------------------
-            // OUTPUT ARRAY FORMAT
-            // ------------------------------------------------------------
-
-            val output =
-                root.optJSONArray(
-                    "output"
-                )
-
-            if (output != null) {
-
-                for (
-                    i in 0 until output.length()
-                ) {
-
-                    val item =
-                        output.optJSONObject(i)
-                            ?: continue
-
-                    val type =
-                        item.optString(
-                            "type",
-                            ""
-                        )
-
-                    if (
-                        type == "image"
-                    ) {
-
-                        val data =
-                            item.optString(
-                                "data",
-                                ""
-                            )
-
-                        val mimeType =
-                            item.optString(
-                                "mime_type",
-                                "image/png"
-                            )
-
-                        if (data.isNotBlank()) {
-
-                            return ImageResult(
-                                base64Data = data,
-                                mimeType = mimeType
-                            )
-                        }
-                    }
-
-                    // Some response variants may
-                    // put image information inside
-                    // an output_image object.
-                    val nestedImage =
-                        item.optJSONObject(
-                            "image"
-                        )
-
-                    if (nestedImage != null) {
-
-                        val data =
-                            nestedImage.optString(
-                                "data",
-                                ""
-                            )
-
-                        if (data.isNotBlank()) {
-
-                            return ImageResult(
-                                base64Data = data,
-                                mimeType =
-                                    nestedImage.optString(
-                                        "mime_type",
-                                        "image/png"
-                                    )
-                            )
-                        }
-                    }
-                }
-            }
-
-            // ------------------------------------------------------------
-            // LEGACY / CANDIDATE FORMAT
-            // ------------------------------------------------------------
-
-            val candidates =
-                root.optJSONArray(
-                    "candidates"
-                )
-
-            if (candidates != null) {
-
-                for (
-                    i in 0 until candidates.length()
-                ) {
-
-                    val candidate =
-                        candidates.optJSONObject(i)
-                            ?: continue
-
-                    val content =
-                        candidate.optJSONObject(
-                            "content"
-                        )
-                            ?: continue
-
-                    val parts =
-                        content.optJSONArray(
-                            "parts"
-                        )
-                            ?: continue
-
-                    for (
-                        j in 0 until parts.length()
-                    ) {
-
-                        val part =
-                            parts.optJSONObject(j)
-                                ?: continue
-
-                        val inlineData =
-                            part.optJSONObject(
-                                "inlineData"
-                            )
-                                ?: continue
-
-                        val data =
-                            inlineData.optString(
-                                "data",
-                                ""
-                            )
-
-                        if (data.isNotBlank()) {
-
-                            return ImageResult(
-                                base64Data = data,
-                                mimeType =
-                                    inlineData.optString(
-                                        "mimeType",
-                                        "image/png"
-                                    )
-                            )
-                        }
-                    }
-                }
-            }
-
             null
 
-        } catch (
-            _: Exception
-        ) {
+        } catch (_: Exception) {
 
             null
         }
     }
-
-    // ========================================================================
-    // ERROR PARSER
-    // ========================================================================
 
     private fun extractErrorMessage(
         responseBody: String
@@ -792,32 +468,22 @@ class ImageGenerationService(
         return try {
 
             val root =
-                JSONObject(
-                    responseBody
-                )
+                JSONObject(responseBody)
 
             val error =
-                root.optJSONObject(
-                    "error"
-                )
+                root.optJSONObject("error")
 
-            error?.optString(
-                "message"
-            )?.takeIf {
-                it.isNotBlank()
-            }
+            error
+                ?.optString("message")
+                ?.takeIf {
+                    it.isNotBlank()
+                }
 
-        } catch (
-            _: Exception
-        ) {
+        } catch (_: Exception) {
 
             null
         }
     }
-
-    // ========================================================================
-    // FRIENDLY ERRORS
-    // ========================================================================
 
     private fun friendlyError(
         statusCode: Int
@@ -829,25 +495,21 @@ class ImageGenerationService(
                 "Invalid image request."
 
             401, 403 ->
-                "Gemini API authentication failed."
+                "OpenAI API authentication failed."
 
             404 ->
-                "Gemini image model is unavailable."
+                "OpenAI image generation service is unavailable."
 
             429 ->
                 "Image generation is temporarily busy. Please try again shortly."
 
             500, 502, 503, 504 ->
-                "Image generation service is temporarily unavailable. Please try again shortly."
+                "OpenAI image generation service is temporarily unavailable."
 
             else ->
                 "Image generation failed. Please try again."
         }
     }
-
-    // ========================================================================
-    // MIME TYPE
-    // ========================================================================
 
     private fun normalizeMimeType(
         mimeType: String
@@ -884,10 +546,6 @@ class ImageGenerationService(
         }
     }
 
-    // ========================================================================
-    // BITMAP -> BASE64
-    // ========================================================================
-
     suspend fun bitmapToBase64(
         bitmap: Bitmap,
         quality: Int = 90
@@ -900,10 +558,7 @@ class ImageGenerationService(
 
         bitmap.compress(
             Bitmap.CompressFormat.JPEG,
-            quality.coerceIn(
-                1,
-                100
-            ),
+            quality.coerceIn(1, 100),
             stream
         )
 
@@ -913,10 +568,6 @@ class ImageGenerationService(
         )
     }
 }
-
-// ============================================================================
-// IMAGE GENERATION EXCEPTION
-// ============================================================================
 
 class ImageGenerationException(
     val statusCode: Int,
