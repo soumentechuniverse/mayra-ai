@@ -8,7 +8,7 @@ import com.example.domain.model.ChatMessage
 import com.example.domain.service.AiService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -77,6 +77,7 @@ class OpenAIService(
                 }
 
                 val output = extractOutputText(body)
+
                 if (output.isBlank()) {
                     Result.failure(
                         IllegalStateException(
@@ -104,7 +105,7 @@ class OpenAIService(
         config: AiModelConfig,
         attachments: List<Attachment>,
         enableSearch: Boolean
-    ): Flow<AiStreamChunk> = flow {
+    ): Flow<AiStreamChunk> = channelFlow {
         try {
             val requestJson = buildRequest(
                 prompt = prompt,
@@ -129,7 +130,8 @@ class OpenAIService(
                 client.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
                         val body = response.body?.string().orEmpty()
-                        emit(
+
+                        send(
                             AiStreamChunk(
                                 conversationId = conversationId,
                                 textDelta =
@@ -141,8 +143,9 @@ class OpenAIService(
                     }
 
                     val source = response.body?.source()
+
                     if (source == null) {
-                        emit(
+                        send(
                             AiStreamChunk(
                                 conversationId = conversationId,
                                 textDelta = "",
@@ -161,6 +164,7 @@ class OpenAIService(
                         if (!line.startsWith("data:")) continue
 
                         val data = line.removePrefix("data:").trim()
+
                         if (data.isEmpty()) continue
 
                         if (data == "[DONE]") {
@@ -172,7 +176,8 @@ class OpenAIService(
 
                         if (event.first.isNotEmpty()) {
                             receivedText = true
-                            emit(
+
+                            send(
                                 AiStreamChunk(
                                     conversationId = conversationId,
                                     textDelta = event.first,
@@ -187,16 +192,8 @@ class OpenAIService(
                         }
                     }
 
-                    if (!receivedText) {
-                        emit(
-                            AiStreamChunk(
-                                conversationId = conversationId,
-                                textDelta = "",
-                                isComplete = true
-                            )
-                        )
-                    } else if (completed) {
-                        emit(
+                    if (!receivedText || completed) {
+                        send(
                             AiStreamChunk(
                                 conversationId = conversationId,
                                 textDelta = "",
@@ -207,7 +204,7 @@ class OpenAIService(
                 }
             }
         } catch (e: Exception) {
-            emit(
+            send(
                 AiStreamChunk(
                     conversationId = conversationId,
                     textDelta =
@@ -340,6 +337,7 @@ class OpenAIService(
     private fun parseStreamEvent(data: String): Pair<String, Boolean> {
         return try {
             val json = JSONObject(data)
+
             when (json.optString("type")) {
                 "response.output_text.delta" ->
                     Pair(json.optString("delta", ""), false)
@@ -352,7 +350,11 @@ class OpenAIService(
                 "error" -> {
                     val message = json.optJSONObject("error")
                         ?.optString("message")
-                        ?: json.optString("message", "OpenAI response failed")
+                        ?: json.optString(
+                            "message",
+                            "OpenAI response failed"
+                        )
+
                     Pair("\nMayra error: $message", true)
                 }
 
@@ -379,6 +381,7 @@ class OpenAIService(
 
                 for (j in 0 until content.length()) {
                     val part = content.optJSONObject(j) ?: continue
+
                     if (part.optString("type") == "output_text") {
                         val text = part.optString("text", "")
                         if (text.isNotEmpty()) result.append(text)
