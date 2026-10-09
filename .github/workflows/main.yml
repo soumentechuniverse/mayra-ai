@@ -9,6 +9,11 @@ on:
 permissions:
   contents: write
 
+# Keep only the newest push build so stale commits cannot publish an older APK.
+concurrency:
+  group: mayra-ai-apk-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -68,7 +73,6 @@ jobs:
 
       - name: Read App Version
         id: version
-        if: github.event_name == 'workflow_dispatch'
         run: |
           VERSION=$(grep -m1 'versionName' app/build.gradle.kts | \
             sed -E 's/.*versionName[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')
@@ -81,7 +85,6 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release
-        if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
