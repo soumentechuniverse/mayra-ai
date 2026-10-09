@@ -1,7 +1,7 @@
 package com.example.domain.model
 
 data class AiModelConfig(
-    val modelId: String = "gpt-6-luna",
+    val modelId: String = "gpt-4.1-mini",
     val displayName: String = "Mayra Flash",
     val description: String = "Fast and highly capable AI for everyday and advanced tasks.",
     val temperature: Float = 0.7f,
