@@ -157,7 +157,7 @@ class AppUpdateAndImageRetrievalTest {
 
         // Verify click on check for updates
         composeTestRule.onNodeWithTag("check_for_updates_button").performClick()
-        assertTrue(checkClicked)
+        composeTestRule.runOnIdle { assertTrue(checkClicked) }
 
         // Verify configure release source toggle
         composeTestRule.onNodeWithTag("configure_update_source_button").performScrollTo().assertIsDisplayed()
