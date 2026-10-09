@@ -72,8 +72,8 @@ class AppUpdateAndImageRetrievalTest {
               "published_at": "2026-09-28T12:00:00Z",
               "assets": [
                 {
-                  "name": "MayraAI-v2.0.0.apk",
-                  "browser_download_url": "https://github.com/soumen-tech/mayra-ai/releases/download/v2.0.0/MayraAI-v2.0.0.apk"
+                  "name": "Mayra-AI.apk",
+                  "browser_download_url": "https://github.com/soumentechuniverse/mayra-ai/releases/download/v2.0.0/Mayra-AI.apk"
                 }
               ]
             }
@@ -92,13 +92,13 @@ class AppUpdateAndImageRetrievalTest {
             .build()
 
         val service = AppUpdateService(mockClient)
-        val result = service.checkForUpdate("https://api.github.com/repos/soumen-tech/mayra-ai/releases/latest")
+        val result = service.checkForUpdate("https://api.github.com/repos/soumentechuniverse/mayra-ai/releases/latest")
 
         assertTrue(result.isSuccess)
         val info = result.getOrNull()
         assertNotNull(info)
         assertEquals("2.0.0", info?.latestVersion)
-        assertEquals("https://github.com/soumen-tech/mayra-ai/releases/download/v2.0.0/MayraAI-v2.0.0.apk", info?.downloadUrl)
+        assertEquals("https://github.com/soumentechuniverse/mayra-ai/releases/download/v2.0.0/Mayra-AI.apk", info?.downloadUrl)
         assertTrue(info?.isUpdateAvailable == true)
         assertEquals("Major UI enhancements and web grounding features.", info?.releaseNotes)
     }
