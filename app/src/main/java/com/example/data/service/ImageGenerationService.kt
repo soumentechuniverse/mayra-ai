@@ -25,7 +25,7 @@ class ImageGenerationService(
             "https://mayra-ai-six.vercel.app/api/images"
 
         private const val IMAGE_MODEL =
-            "gpt-image-2.5-flare"
+            "gpt-image-1"
 
         private fun createClient(): OkHttpClient =
             OkHttpClient.Builder()

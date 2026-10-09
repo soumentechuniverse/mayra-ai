@@ -26,7 +26,7 @@ class OpenAIService(
         private const val ENDPOINT =
             "https://mayra-ai-six.vercel.app/api/chat"
 
-        private const val DEFAULT_MODEL = "gpt-6-luna"
+        private const val DEFAULT_MODEL = "gpt-4.1-mini"
 
         private fun createClient(): OkHttpClient =
             OkHttpClient.Builder()
@@ -232,10 +232,18 @@ class OpenAIService(
         root.put("model", selectedModel)
         root.put("stream", stream)
         root.put("instructions", config.systemPrompt)
+        root.put("max_output_tokens", config.maxTokens.coerceIn(256, 4096))
 
         val input = JSONArray()
 
-        history.forEach { message ->
+        // Bound retained history to reduce repeated token use in long conversations.
+        var remainingHistoryChars = 8_000
+        history.takeLast(8).forEach { message ->
+            if (remainingHistoryChars <= 0) return@forEach
+            val boundedText = message.content.takeLast(minOf(2_000, remainingHistoryChars))
+            if (boundedText.isBlank()) return@forEach
+            remainingHistoryChars -= boundedText.length
+
             val role = when (message.role.name) {
                 "ASSISTANT" -> "assistant"
                 "SYSTEM" -> "system"
@@ -245,7 +253,7 @@ class OpenAIService(
             input.put(
                 JSONObject()
                     .put("role", role)
-                    .put("content", message.content)
+                    .put("content", boundedText)
             )
         }
 
@@ -254,7 +262,7 @@ class OpenAIService(
         content.put(
             JSONObject()
                 .put("type", "input_text")
-                .put("text", prompt)
+                .put("text", prompt.takeLast(12_000))
         )
 
         attachments.forEach { attachment ->

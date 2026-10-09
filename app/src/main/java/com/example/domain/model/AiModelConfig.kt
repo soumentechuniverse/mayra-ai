@@ -133,7 +133,7 @@ For every answer:
         val AvailableModels = listOf(
 
             AiModelConfig(
-                modelId = "gpt-6-luna",
+                modelId = "gpt-4.1-mini",
                 displayName = "Mayra Flash",
                 description = "Fast, efficient OpenAI model for everyday questions, reasoning, coding and multilingual conversations.",
                 temperature = 0.7f,
@@ -141,7 +141,7 @@ For every answer:
             ),
 
             AiModelConfig(
-                modelId = "gpt-6.1-sol",
+                modelId = "gpt-4.1",
                 displayName = "Mayra Smart",
                 description = "Advanced OpenAI model for deeper reasoning, coding and high-accuracy tasks.",
                 temperature = 0.5f,
@@ -149,7 +149,7 @@ For every answer:
             ),
 
             AiModelConfig(
-                modelId = "gpt-6-luna",
+                modelId = "gpt-4.1-mini",
                 displayName = "Mayra Image",
                 description = "Mayra's image mode uses the dedicated OpenAI GPT Image generation service.",
                 temperature = 0.7f,
