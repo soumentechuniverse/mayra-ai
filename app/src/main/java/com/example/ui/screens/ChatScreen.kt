@@ -88,11 +88,14 @@ fun ChatScreen(
     val context = LocalContext.current
 
     LaunchedEffect(
+        uiState.currentConversationId,
         uiState.messages.size,
         uiState.messages.lastOrNull()?.content
     ) {
         if (uiState.messages.isNotEmpty()) {
-            listState.animateScrollToItem(uiState.messages.lastIndex)
+            listState.animateScrollToItem(
+                uiState.messages.lastIndex
+            )
         }
     }
 
@@ -146,13 +149,11 @@ fun ChatScreen(
             }
         }
     ) {
-
         Scaffold(
             modifier = modifier.fillMaxSize(),
 
             topBar = {
                 TopAppBar(
-
                     navigationIcon = {
                         IconButton(
                             onClick = {
@@ -160,7 +161,9 @@ fun ChatScreen(
                                     drawerState.open()
                                 }
                             },
-                            modifier = Modifier.testTag("menu_drawer_button")
+                            modifier = Modifier.testTag(
+                                "menu_drawer_button"
+                            )
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Menu,
@@ -174,7 +177,6 @@ fun ChatScreen(
                         Row(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-
                             Box(
                                 modifier = Modifier
                                     .size(32.dp)
@@ -195,7 +197,6 @@ fun ChatScreen(
                             )
 
                             Column {
-
                                 Text(
                                     text = uiState.currentConversationTitle,
                                     color = MayraTextPrimary,
@@ -215,12 +216,13 @@ fun ChatScreen(
                     },
 
                     actions = {
-
                         IconButton(
                             onClick = {
                                 isSettingsOpen = true
                             },
-                            modifier = Modifier.testTag("settings_button")
+                            modifier = Modifier.testTag(
+                                "settings_button"
+                            )
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Settings,
@@ -233,7 +235,9 @@ fun ChatScreen(
                             onClick = {
                                 viewModel.newChat()
                             },
-                            modifier = Modifier.testTag("top_new_chat_button")
+                            modifier = Modifier.testTag(
+                                "top_new_chat_button"
+                            )
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Add,
@@ -250,19 +254,17 @@ fun ChatScreen(
             },
 
             bottomBar = {
-
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(MayraDarkBackground)
                         .navigationBarsPadding()
                 ) {
-
                     ChatInputBar(
                         inputText = uiState.inputText,
 
-                        onInputTextChanged = {
-                            viewModel.onInputTextChanged(it)
+                        onInputTextChanged = { text ->
+                            viewModel.onInputTextChanged(text)
                         },
 
                         onSendMessage = {
@@ -277,8 +279,8 @@ fun ChatScreen(
 
                         attachedFile = uiState.attachedFile,
 
-                        onAttachmentSelected = {
-                            viewModel.onAttachmentSelected(it)
+                        onAttachmentSelected = { file ->
+                            viewModel.onAttachmentSelected(file)
                         },
 
                         speechRecognizerHelper =
@@ -296,19 +298,11 @@ fun ChatScreen(
             containerColor = MayraDarkBackground
 
         ) { paddingValues ->
-
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(paddingValues)
             ) {
-
-                /*
-                 * SUBTLE SOUMEN MONDAL WATERMARK
-                 *
-                 * Kept behind the conversation content so it
-                 * remains visible without disturbing readability.
-                 */
                 Text(
                     text = "Soumen Mondal",
                     color = MayraTextPrimary.copy(alpha = 0.04f),
@@ -318,7 +312,6 @@ fun ChatScreen(
                 )
 
                 if (uiState.messages.isEmpty()) {
-
                     WelcomeScreen(
                         onSelectPrompt = { prompt ->
                             viewModel.onInputTextChanged(prompt)
@@ -326,32 +319,26 @@ fun ChatScreen(
                         },
                         modifier = Modifier.fillMaxSize()
                     )
-
                 } else {
-
                     LazyColumn(
                         state = listState,
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(bottom = 8.dp)
                     ) {
-
                         items(
                             items = uiState.messages,
-                            key = { message ->
-                                message.id
-                            }
+                            key = { message -> message.id }
                         ) { message ->
-
                             ChatMessageItem(
                                 message = message,
 
-                                onRetry = {
-                                    viewModel.retryMessage(it)
+                                onRetry = { messageId ->
+                                    viewModel.retryMessage(messageId)
                                 },
 
-                                onSpeak = {
-                                    viewModel.speakText(it)
+                                onSpeak = { text ->
+                                    viewModel.speakText(text)
                                 }
                             )
                         }
@@ -362,9 +349,7 @@ fun ChatScreen(
                                 it.status == "SENDING"
                             }
                         ) {
-
                             item {
-
                                 Box(
                                     modifier = Modifier.padding(
                                         horizontal = 16.dp,
@@ -381,11 +366,7 @@ fun ChatScreen(
         }
     }
 
-    /*
-     * SETTINGS DIALOG
-     */
     if (isSettingsOpen) {
-
         AlertDialog(
             onDismissRequest = {
                 if (!isCheckingUpdate) {
@@ -401,27 +382,23 @@ fun ChatScreen(
             },
 
             text = {
-
                 Column {
-
                     Text(
                         text = "Mayra AI",
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 16.sp
                     )
 
-                    Spacer(
-                        modifier = Modifier.size(8.dp)
-                    )
+                    Spacer(modifier = Modifier.size(8.dp))
 
                     Text(
-                        text = "App version: ${updateInfo?.currentVersion ?: "1.0.1"}",
+                        text = "App version: ${
+                            updateInfo?.currentVersion ?: "1.0.1"
+                        }",
                         fontSize = 14.sp
                     )
 
-                    Spacer(
-                        modifier = Modifier.size(16.dp)
-                    )
+                    Spacer(modifier = Modifier.size(16.dp))
 
                     Text(
                         text = when {
@@ -432,7 +409,9 @@ fun ChatScreen(
                                 updateError!!
 
                             updateInfo?.isUpdateAvailable == true ->
-                                "New version available: ${updateInfo?.latestVersion}"
+                                "New version available: ${
+                                    updateInfo?.latestVersion
+                                }"
 
                             updateInfo != null ->
                                 "You are using the latest version."
@@ -447,10 +426,7 @@ fun ChatScreen(
                         updateInfo?.isUpdateAvailable == true &&
                         updateInfo?.releaseNotes?.isNotBlank() == true
                     ) {
-
-                        Spacer(
-                            modifier = Modifier.size(12.dp)
-                        )
+                        Spacer(modifier = Modifier.size(12.dp))
 
                         Text(
                             text = updateInfo?.releaseNotes ?: "",
@@ -461,16 +437,13 @@ fun ChatScreen(
             },
 
             confirmButton = {
-
                 Row(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-
                     if (
                         updateInfo?.isUpdateAvailable == true &&
                         updateInfo?.downloadUrl?.isNotBlank() == true
                     ) {
-
                         Button(
                             onClick = {
                                 updateInfo?.let { info ->
@@ -485,19 +458,15 @@ fun ChatScreen(
                             Text("Update")
                         }
 
-                        Spacer(
-                            modifier = Modifier.width(8.dp)
-                        )
+                        Spacer(modifier = Modifier.width(8.dp))
                     }
 
                     Button(
                         onClick = {
-
                             isCheckingUpdate = true
                             updateError = null
 
                             scope.launch {
-
                                 val result =
                                     updateService.checkForUpdate()
 
@@ -517,17 +486,17 @@ fun ChatScreen(
                         enabled = !isCheckingUpdate
                     ) {
                         Text(
-                            if (isCheckingUpdate)
+                            if (isCheckingUpdate) {
                                 "Checking..."
-                            else
+                            } else {
                                 "Check for Update"
+                            }
                         )
                     }
                 }
             },
 
             dismissButton = {
-
                 Button(
                     onClick = {
                         isSettingsOpen = false
