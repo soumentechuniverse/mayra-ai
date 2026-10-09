@@ -120,8 +120,8 @@ class AppUpdateAndImageRetrievalTest {
 
     @Test
     fun `settings sheet displays App Update section with check button and version information`() {
-        var checkClicked = false
-        var toggleConfigClicked = false
+        val checkClicked = java.util.concurrent.atomic.AtomicBoolean(false)
+        val toggleConfigClicked = java.util.concurrent.atomic.AtomicBoolean(false)
 
         composeTestRule.setContent {
             MayraAITheme(darkTheme = true) {
@@ -135,8 +135,8 @@ class AppUpdateAndImageRetrievalTest {
                     onToggleTheme = {},
                     onClearChat = {},
                     onDismiss = {},
-                    onCheckForUpdate = { checkClicked = true },
-                    onToggleUpdateSourceConfig = { toggleConfigClicked = true },
+                    onCheckForUpdate = { checkClicked.set(true) },
+                    onToggleUpdateSourceConfig = { toggleConfigClicked.set(true) },
                     updateStatusMessage = "Mayra AI is up to date (v1.0).",
                     updateInfo = AppUpdateInfo(
                         currentVersion = "1.0",
@@ -157,11 +157,11 @@ class AppUpdateAndImageRetrievalTest {
 
         // Verify click on check for updates
         composeTestRule.onNodeWithTag("check_for_updates_button").performClick()
-        composeTestRule.runOnIdle { assertTrue(checkClicked) }
+        composeTestRule.runOnIdle { assertTrue(checkClicked.get()) }
 
         // Verify configure release source toggle
         composeTestRule.onNodeWithTag("configure_update_source_button").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithTag("configure_update_source_button").performClick()
-        assertTrue(toggleConfigClicked)
+        composeTestRule.runOnIdle { assertTrue(toggleConfigClicked.get()) }
     }
 }
