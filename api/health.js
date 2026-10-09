@@ -6,15 +6,20 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const keyConfigured = Boolean(
+  const geminiConfigured = Boolean(
+    typeof process.env.GEMINI_API_KEY === "string" &&
+    process.env.GEMINI_API_KEY.trim().length > 0
+  );
+
+  const openAIConfigured = Boolean(
     typeof process.env.OPENAI_API_KEY === "string" &&
     process.env.OPENAI_API_KEY.trim().length > 0
   );
 
-  return res.status(keyConfigured ? 200 : 503).json({
+  return res.status(geminiConfigured ? 200 : 503).json({
     service: "Mayra AI API",
-    status: keyConfigured ? "ready" : "configuration_required",
-    chat: keyConfigured ? "configured" : "not_configured",
-    imageGeneration: keyConfigured ? "configured" : "not_configured"
+    status: geminiConfigured ? "ready" : "configuration_required",
+    chat: geminiConfigured ? "free_tier_configured" : "GEMINI_API_KEY_required",
+    imageGeneration: openAIConfigured ? "OpenAI key configured; API billing may still be required" : "paid_API_key_required"
   });
 }
