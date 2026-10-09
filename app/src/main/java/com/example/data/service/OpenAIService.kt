@@ -1,3 +1,4 @@
+
 package com.example.data.service
 
 import com.example.domain.model.AiModelConfig
@@ -45,7 +46,6 @@ class OpenAIService(
         attachments: List<Attachment>,
         enableSearch: Boolean
     ): Result<String> = withContext(Dispatchers.IO) {
-
         try {
             val requestJson = buildRequest(
                 prompt = prompt,
@@ -66,7 +66,6 @@ class OpenAIService(
                 .build()
 
             client.newCall(request).execute().use { response ->
-
                 val body = response.body?.string().orEmpty()
 
                 if (!response.isSuccessful) {
@@ -77,9 +76,17 @@ class OpenAIService(
                     )
                 }
 
-                Result.success(extractOutputText(body))
+                val output = extractOutputText(body)
+                if (output.isBlank()) {
+                    Result.failure(
+                        IllegalStateException(
+                            "Mayra API returned an empty response."
+                        )
+                    )
+                } else {
+                    Result.success(output)
+                }
             }
-
         } catch (e: Exception) {
             Result.failure(
                 IllegalStateException(
@@ -98,9 +105,7 @@ class OpenAIService(
         attachments: List<Attachment>,
         enableSearch: Boolean
     ): Flow<AiStreamChunk> = flow {
-
         try {
-
             val requestJson = buildRequest(
                 prompt = prompt,
                 history = history,
@@ -121,13 +126,9 @@ class OpenAIService(
                 .build()
 
             withContext(Dispatchers.IO) {
-
                 client.newCall(request).execute().use { response ->
-
                     if (!response.isSuccessful) {
-
                         val body = response.body?.string().orEmpty()
-
                         emit(
                             AiStreamChunk(
                                 conversationId = conversationId,
@@ -136,14 +137,11 @@ class OpenAIService(
                                 isComplete = true
                             )
                         )
-
                         return@withContext
                     }
 
                     val source = response.body?.source()
-
                     if (source == null) {
-
                         emit(
                             AiStreamChunk(
                                 conversationId = conversationId,
@@ -151,59 +149,53 @@ class OpenAIService(
                                 isComplete = true
                             )
                         )
-
                         return@withContext
                     }
 
-                    var receivedData = false
+                    var receivedText = false
+                    var completed = false
 
                     while (!source.exhausted()) {
-
                         val line = source.readUtf8Line() ?: break
 
-                        if (!line.startsWith("data:")) {
-                            continue
-                        }
+                        if (!line.startsWith("data:")) continue
 
-                        val data = line
-                            .removePrefix("data:")
-                            .trim()
-
-                        if (data.isEmpty()) {
-                            continue
-                        }
+                        val data = line.removePrefix("data:").trim()
+                        if (data.isEmpty()) continue
 
                         if (data == "[DONE]") {
-
-                            emit(
-                                AiStreamChunk(
-                                    conversationId = conversationId,
-                                    textDelta = "",
-                                    isComplete = true
-                                )
-                            )
-
+                            completed = true
                             break
                         }
 
-                        val delta = parseStreamDelta(data)
+                        val event = parseStreamEvent(data)
 
-                        if (delta.isNotEmpty()) {
-
-                            receivedData = true
-
+                        if (event.first.isNotEmpty()) {
+                            receivedText = true
                             emit(
                                 AiStreamChunk(
                                     conversationId = conversationId,
-                                    textDelta = delta,
+                                    textDelta = event.first,
                                     isComplete = false
                                 )
                             )
                         }
+
+                        if (event.second) {
+                            completed = true
+                            break
+                        }
                     }
 
-                    if (!receivedData) {
-
+                    if (!receivedText) {
+                        emit(
+                            AiStreamChunk(
+                                conversationId = conversationId,
+                                textDelta = "",
+                                isComplete = true
+                            )
+                        )
+                    } else if (completed) {
                         emit(
                             AiStreamChunk(
                                 conversationId = conversationId,
@@ -214,9 +206,7 @@ class OpenAIService(
                     }
                 }
             }
-
         } catch (e: Exception) {
-
             emit(
                 AiStreamChunk(
                     conversationId = conversationId,
@@ -236,46 +226,31 @@ class OpenAIService(
         enableSearch: Boolean,
         stream: Boolean
     ): JSONObject {
-
         val root = JSONObject()
 
-        root.put(
-            "model",
-            if (config.modelId.startsWith("gpt-")) {
-                config.modelId
-            } else {
-                DEFAULT_MODEL
-            }
-        )
+        val selectedModel = config.modelId
+            .takeIf { it.startsWith("gpt-") }
+            ?: DEFAULT_MODEL
 
+        root.put("model", selectedModel)
         root.put("stream", stream)
-
-        root.put(
-            "instructions",
-            config.systemPrompt
-        )
+        root.put("instructions", config.systemPrompt)
 
         val input = JSONArray()
 
         history.forEach { message ->
-
             val role = when (message.role.name) {
                 "ASSISTANT" -> "assistant"
                 "SYSTEM" -> "system"
                 else -> "user"
             }
 
-            val messageObject = JSONObject()
-
-            messageObject.put("role", role)
-            messageObject.put("content", message.content)
-
-            input.put(messageObject)
+            input.put(
+                JSONObject()
+                    .put("role", role)
+                    .put("content", message.content)
+            )
         }
-
-        val currentMessage = JSONObject()
-
-        currentMessage.put("role", "user")
 
         val content = JSONArray()
 
@@ -286,21 +261,13 @@ class OpenAIService(
         )
 
         attachments.forEach { attachment ->
-
             val base64 = attachment.base64Data
-
-            if (base64.isNullOrEmpty()) {
-                return@forEach
-            }
-
             val mimeType = attachment.mimeType.lowercase()
-            val fileName =
-                attachment.name.ifBlank { "attachment" }
+            val fileName = attachment.name.ifBlank { "attachment" }
 
             when {
-
-                mimeType.startsWith("image/") -> {
-
+                mimeType.startsWith("image/") &&
+                    !base64.isNullOrBlank() -> {
                     content.put(
                         JSONObject()
                             .put("type", "input_image")
@@ -312,8 +279,31 @@ class OpenAIService(
                     )
                 }
 
-                else -> {
+                mimeType == "application/pdf" &&
+                    !base64.isNullOrBlank() -> {
+                    content.put(
+                        JSONObject()
+                            .put("type", "input_file")
+                            .put("filename", fileName)
+                            .put(
+                                "file_data",
+                                "data:application/pdf;base64,$base64"
+                            )
+                    )
+                }
 
+                !attachment.textContent.isNullOrBlank() -> {
+                    content.put(
+                        JSONObject()
+                            .put("type", "input_text")
+                            .put(
+                                "text",
+                                "Attached document: $fileName\n\n${attachment.textContent}"
+                            )
+                    )
+                }
+
+                !base64.isNullOrBlank() -> {
                     content.put(
                         JSONObject()
                             .put("type", "input_file")
@@ -327,19 +317,19 @@ class OpenAIService(
             }
         }
 
-        currentMessage.put("content", content)
-
-        input.put(currentMessage)
+        input.put(
+            JSONObject()
+                .put("role", "user")
+                .put("content", content)
+        )
 
         root.put("input", input)
 
         if (enableSearch) {
-
             root.put(
                 "tools",
                 JSONArray().put(
-                    JSONObject()
-                        .put("type", "web_search")
+                    JSONObject().put("type", "web_search")
                 )
             )
         }
@@ -347,94 +337,68 @@ class OpenAIService(
         return root
     }
 
-    private fun parseStreamDelta(data: String): String {
-
+    private fun parseStreamEvent(data: String): Pair<String, Boolean> {
         return try {
-
             val json = JSONObject(data)
-
             when (json.optString("type")) {
-
                 "response.output_text.delta" ->
-                    json.optString("delta", "")
+                    Pair(json.optString("delta", ""), false)
 
-                else ->
-                    json.optString("delta", "")
+                "response.completed",
+                "response.done" ->
+                    Pair("", true)
+
+                "response.failed",
+                "error" -> {
+                    val message = json.optJSONObject("error")
+                        ?.optString("message")
+                        ?: json.optString("message", "OpenAI response failed")
+                    Pair("\nMayra error: $message", true)
+                }
+
+                else -> Pair("", false)
             }
-
         } catch (_: Exception) {
-            ""
+            Pair("", false)
         }
     }
 
     private fun extractOutputText(body: String): String {
-
         return try {
-
             val root = JSONObject(body)
 
-            val directText =
-                root.optString("output_text", "")
+            val directText = root.optString("output_text", "")
+            if (directText.isNotBlank()) return directText
 
-            if (directText.isNotEmpty()) {
-                return directText
-            }
-
-            val output =
-                root.optJSONArray("output")
-                    ?: return ""
-
+            val output = root.optJSONArray("output") ?: return ""
             val result = StringBuilder()
 
             for (i in 0 until output.length()) {
-
-                val item =
-                    output.optJSONObject(i)
-                        ?: continue
-
-                val content =
-                    item.optJSONArray("content")
-                        ?: continue
+                val item = output.optJSONObject(i) ?: continue
+                val content = item.optJSONArray("content") ?: continue
 
                 for (j in 0 until content.length()) {
-
-                    val part =
-                        content.optJSONObject(j)
-                            ?: continue
-
-                    val text =
-                        part.optString("text", "")
-
-                    if (text.isNotEmpty()) {
-                        result.append(text)
+                    val part = content.optJSONObject(j) ?: continue
+                    if (part.optString("type") == "output_text") {
+                        val text = part.optString("text", "")
+                        if (text.isNotEmpty()) result.append(text)
                     }
                 }
             }
 
             result.toString()
-
         } catch (_: Exception) {
             ""
         }
     }
 
     private fun extractError(body: String): String {
-
         return try {
-
             val root = JSONObject(body)
-
-            val error =
-                root.optJSONObject("error")
-
-            error?.optString("message", body)
-                ?: body
-
+            val error = root.optJSONObject("error")
+            error?.optString("message", body) ?: body
         } catch (_: Exception) {
-
-            body.ifBlank {
-                "Unknown Mayra API error"
-            }
+            body.ifBlank { "Unknown Mayra API error" }
         }
     }
 }
