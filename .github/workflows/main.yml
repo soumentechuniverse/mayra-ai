@@ -40,7 +40,10 @@ jobs:
           MAYRA_KEY_ALIAS: ${{ secrets.MAYRA_KEY_ALIAS }}
           MAYRA_KEY_PASSWORD: ${{ secrets.MAYRA_KEY_PASSWORD }}
         run: |
-          if [ -n "$MAYRA_SIGNING_KEY_BASE64" ] &&              [ -n "$MAYRA_KEYSTORE_PASSWORD" ] &&              [ -n "$MAYRA_KEY_ALIAS" ] &&              [ -n "$MAYRA_KEY_PASSWORD" ]; then
+          if [ -n "$MAYRA_SIGNING_KEY_BASE64" ] && \
+             [ -n "$MAYRA_KEYSTORE_PASSWORD" ] && \
+             [ -n "$MAYRA_KEY_ALIAS" ] && \
+             [ -n "$MAYRA_KEY_PASSWORD" ]; then
             echo "$MAYRA_SIGNING_KEY_BASE64" | base64 --decode > "$GITHUB_WORKSPACE/mayra-release.keystore"
             echo "MAYRA_KEYSTORE_PATH=$GITHUB_WORKSPACE/mayra-release.keystore" >> "$GITHUB_ENV"
             echo "MAYRA_KEYSTORE_PASSWORD=$MAYRA_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
@@ -95,7 +98,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           TAG="v${VERSION}"
-          APK="app/build/outputs/apk/debug/Mayra-AI.apk"
+          APK="Mayra-AI.apk"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK" --clobber
