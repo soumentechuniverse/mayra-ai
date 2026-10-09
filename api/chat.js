@@ -20,7 +20,30 @@ export default async function handler(req, res) {
   }
 
   try {
-    const wantsStream = Boolean(req.body?.stream);
+    const payload = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+      ? { ...req.body }
+      : {};
+
+    if (!Array.isArray(payload.input) || payload.input.length === 0 || payload.input.length > 12) {
+      return res.status(400).json({ error: "Invalid or oversized chat input." });
+    }
+
+    // The public mobile client must not be allowed to select arbitrary expensive models.
+    const allowedModels = new Set(["gpt-4.1-mini", "gpt-4.1"]);
+    if (!allowedModels.has(payload.model)) {
+      payload.model = "gpt-4.1-mini";
+    }
+
+    const requestedTokens = Number(payload.max_output_tokens ?? 1024);
+    payload.max_output_tokens = Number.isFinite(requestedTokens)
+      ? Math.min(4096, Math.max(256, Math.floor(requestedTokens)))
+      : 1024;
+
+    if (typeof payload.instructions === "string") {
+      payload.instructions = payload.instructions.slice(0, 16000);
+    }
+
+    const wantsStream = Boolean(payload.stream);
 
     const upstream = await fetch(
       "https://api.openai.com/v1/responses",
@@ -33,7 +56,7 @@ export default async function handler(req, res) {
             ? "text/event-stream"
             : "application/json"
         },
-        body: JSON.stringify(req.body ?? {})
+        body: JSON.stringify(payload)
       }
     );
 
