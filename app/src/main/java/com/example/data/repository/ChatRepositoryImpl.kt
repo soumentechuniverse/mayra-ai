@@ -237,6 +237,21 @@ Core Instructions:
             "फोटो बनाओ"
         )
 
+        // Romanized Bengali / Banglish image requests.
+        val romanBengali = listOf(
+            "chobi baniye dao",
+            "chobi baniye",
+            "chobi banao",
+            "chobi toiri koro",
+            "chobi toiri kore dao",
+            "chobi akho",
+            "ekta chobi dao",
+            "image baniye dao",
+            "image banao",
+            "ekta image banao",
+            "photo baniye dao"
+        )
+
         return english.any {
             clean.contains(it)
         } ||
@@ -244,6 +259,9 @@ Core Instructions:
                     clean.contains(it)
                 } ||
                 hindi.any {
+                    clean.contains(it)
+                } ||
+                romanBengali.any {
                     clean.contains(it)
                 }
     }
@@ -1203,6 +1221,14 @@ Core Instructions:
 
                 Regex(
                     "(?i)^make\\s+"
+                ),
+
+                Regex(
+                    "(?i)^(chobi|image|photo)\\s+(baniye\\s+dao|baniye|banao|toiri\\s+koro|toiri\\s+kore\\s+dao|akho|dao)\\s*"
+                ),
+
+                Regex(
+                    "(?i)^ekta\\s+(chobi|image|photo)\\s+(banao|baniye\\s+dao|toiri\\s+koro)\\s*"
                 )
             )
 
