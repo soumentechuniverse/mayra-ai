@@ -22,7 +22,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -39,7 +39,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -59,13 +58,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.data.local.entity.MessageEntity
 import com.example.data.remote.RetrofitClient
 import com.example.data.remote.model.WebSourceCitation
-import com.example.data.local.entity.MessageEntity
 import com.example.ui.theme.MayraAssistantBubble
 import com.example.ui.theme.MayraCyan
 import com.example.ui.theme.MayraDarkBorder
-import com.example.ui.theme.MayraDarkSurface
 import com.example.ui.theme.MayraDarkSurfaceVariant
 import com.example.ui.theme.MayraErrorRed
 import com.example.ui.theme.MayraIndigo
@@ -93,13 +91,15 @@ fun ChatMessageItem(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 6.dp),
-        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
+        horizontalArrangement = if (isUser) {
+            Arrangement.End
+        } else {
+            Arrangement.Start
+        },
         verticalAlignment = Alignment.Top
     ) {
 
-        // ---------------------------------------------------------
         // MAYRA AI AVATAR
-        // ---------------------------------------------------------
         if (!isUser) {
             Box(
                 modifier = Modifier
@@ -117,16 +117,13 @@ fun ChatMessageItem(
                 )
             }
 
-            Spacer(
-                modifier = Modifier.width(8.dp)
-            )
+            Spacer(modifier = Modifier.width(8.dp))
         }
 
-        // ---------------------------------------------------------
-        // MESSAGE CONTENT
-        // ---------------------------------------------------------
+        // RESPONSIVE MESSAGE CONTENT
+        // Uses the remaining row width instead of a fixed 320.dp limit.
         Column(
-            modifier = Modifier.widthIn(max = 320.dp),
+            modifier = Modifier.weight(1f),
             horizontalAlignment = if (isUser) {
                 Alignment.End
             } else {
@@ -134,9 +131,7 @@ fun ChatMessageItem(
             }
         ) {
 
-            // -----------------------------------------------------
             // USER ATTACHMENT
-            // -----------------------------------------------------
             if (
                 isUser &&
                 (
@@ -167,9 +162,7 @@ fun ChatMessageItem(
                             modifier = Modifier.size(16.dp)
                         )
 
-                        Spacer(
-                            modifier = Modifier.width(6.dp)
-                        )
+                        Spacer(modifier = Modifier.width(6.dp))
 
                         Text(
                             text = message.attachmentName ?: "Attachment",
@@ -181,9 +174,7 @@ fun ChatMessageItem(
                 }
             }
 
-            // -----------------------------------------------------
             // MESSAGE BUBBLE
-            // -----------------------------------------------------
             Surface(
                 shape = RoundedCornerShape(
                     topStart = 16.dp,
@@ -212,16 +203,12 @@ fun ChatMessageItem(
                     }
                 )
             ) {
-
                 Column(
                     modifier = Modifier.padding(14.dp)
                 ) {
 
-                    // -------------------------------------------------
                     // GENERATED IMAGE
-                    // -------------------------------------------------
                     if (!message.imageUrl.isNullOrBlank()) {
-
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -236,7 +223,6 @@ fun ChatMessageItem(
                                 }
                                 .testTag("generated_image")
                         ) {
-
                             AsyncImage(
                                 model = message.imageUrl,
                                 contentDescription = "Generated image by Mayra AI",
@@ -247,7 +233,6 @@ fun ChatMessageItem(
                                 contentScale = ContentScale.Fit
                             )
 
-                            // Small image hint
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.BottomEnd)
@@ -269,48 +254,35 @@ fun ChatMessageItem(
                             }
                         }
 
-                        Spacer(
-                            modifier = Modifier.height(10.dp)
-                        )
+                        Spacer(modifier = Modifier.height(10.dp))
                     }
 
-                    // -------------------------------------------------
-                    // MESSAGE CONTENT
-                    // -------------------------------------------------
+                    // MESSAGE TEXT
                     if (
                         message.status == "SENDING" &&
                         message.content.isBlank()
                     ) {
-
                         ThinkingIndicator()
-
                     } else {
-
                         MarkdownContent(
                             content = message.content,
                             textColor = MayraTextPrimary
                         )
 
-                        // Streaming indicator
+                        // STREAMING INDICATOR
                         if (message.status == "SENDING") {
-
-                            Spacer(
-                                modifier = Modifier.height(6.dp)
-                            )
+                            Spacer(modifier = Modifier.height(6.dp))
 
                             Row(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(12.dp),
                                     strokeWidth = 1.5.dp,
                                     color = MayraCyan
                                 )
 
-                                Spacer(
-                                    modifier = Modifier.width(6.dp)
-                                )
+                                Spacer(modifier = Modifier.width(6.dp))
 
                                 Text(
                                     text = "Streaming...",
@@ -321,11 +293,8 @@ fun ChatMessageItem(
                         }
                     }
 
-                    // -------------------------------------------------
                     // WEB SEARCH SOURCES
-                    // -------------------------------------------------
                     if (!message.sourcesJson.isNullOrBlank()) {
-
                         val citations = remember(message.sourcesJson) {
                             try {
                                 RetrofitClient.json
@@ -338,10 +307,7 @@ fun ChatMessageItem(
                         }
 
                         if (citations.isNotEmpty()) {
-
-                            Spacer(
-                                modifier = Modifier.height(12.dp)
-                            )
+                            Spacer(modifier = Modifier.height(12.dp))
 
                             Text(
                                 text = "Sources & Citations:",
@@ -350,29 +316,21 @@ fun ChatMessageItem(
                                 color = MayraCyan
                             )
 
-                            Spacer(
-                                modifier = Modifier.height(6.dp)
-                            )
+                            Spacer(modifier = Modifier.height(6.dp))
 
                             FlowRow(
-                                horizontalArrangement =
-                                    Arrangement.spacedBy(6.dp),
-                                verticalArrangement =
-                                    Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-
                                 citations.forEach { citation ->
-
                                     Surface(
                                         shape = RoundedCornerShape(12.dp),
                                         color = MayraDarkSurfaceVariant,
-                                        border =
-                                            androidx.compose.foundation.BorderStroke(
-                                                0.5.dp,
-                                                MayraCyan.copy(alpha = 0.5f)
-                                            ),
+                                        border = androidx.compose.foundation.BorderStroke(
+                                            0.5.dp,
+                                            MayraCyan.copy(alpha = 0.5f)
+                                        ),
                                         modifier = Modifier.clickable {
-
                                             try {
                                                 context.startActivity(
                                                     Intent(
@@ -389,36 +347,26 @@ fun ChatMessageItem(
                                             }
                                         }
                                     ) {
-
                                         Row(
                                             modifier = Modifier.padding(
                                                 horizontal = 8.dp,
                                                 vertical = 4.dp
                                             ),
-                                            verticalAlignment =
-                                                Alignment.CenterVertically
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
-
                                             Icon(
-                                                imageVector =
-                                                    Icons.Default.Language,
+                                                imageVector = Icons.Default.Language,
                                                 contentDescription = null,
                                                 tint = MayraCyan,
-                                                modifier =
-                                                    Modifier.size(12.dp)
+                                                modifier = Modifier.size(12.dp)
                                             )
 
-                                            Spacer(
-                                                modifier =
-                                                    Modifier.width(4.dp)
-                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
 
                                             Text(
-                                                text = citation.title
-                                                    .take(24),
+                                                text = citation.title.take(24),
                                                 fontSize = 11.sp,
-                                                color =
-                                                    MayraTextSecondary
+                                                color = MayraTextSecondary
                                             )
                                         }
                                     }
@@ -427,43 +375,31 @@ fun ChatMessageItem(
                         }
                     }
 
-                    // -------------------------------------------------
                     // ERROR + RETRY
-                    // -------------------------------------------------
                     if (message.status == "ERROR") {
-
-                        Spacer(
-                            modifier = Modifier.height(10.dp)
-                        )
+                        Spacer(modifier = Modifier.height(10.dp))
 
                         OutlinedButton(
                             onClick = {
                                 onRetry(message.id)
                             },
-                            modifier = Modifier.testTag(
-                                "retry_button"
+                            modifier = Modifier.testTag("retry_button"),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MayraCyan
                             ),
-                            colors =
-                                ButtonDefaults.outlinedButtonColors(
-                                    contentColor = MayraCyan
-                                ),
-                            border =
-                                androidx.compose.foundation.BorderStroke(
-                                    1.dp,
-                                    MayraCyan
-                                ),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                MayraCyan
+                            ),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-
                             Icon(
                                 imageVector = Icons.Default.Refresh,
                                 contentDescription = "Retry",
                                 modifier = Modifier.size(14.dp)
                             )
 
-                            Spacer(
-                                modifier = Modifier.width(6.dp)
-                            )
+                            Spacer(modifier = Modifier.width(6.dp))
 
                             Text(
                                 text = "Retry",
@@ -474,15 +410,12 @@ fun ChatMessageItem(
                 }
             }
 
-            // ---------------------------------------------------------
             // ASSISTANT MESSAGE ACTIONS
-            // ---------------------------------------------------------
             if (
                 !isUser &&
                 message.status == "SENT" &&
                 message.content.isNotBlank()
             ) {
-
                 Row(
                     modifier = Modifier.padding(
                         top = 4.dp,
@@ -490,32 +423,24 @@ fun ChatMessageItem(
                     ),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-
-                    // Speak
                     IconButton(
                         onClick = {
                             onSpeak(message.content)
                         },
                         modifier = Modifier.size(28.dp)
                     ) {
-
                         Icon(
-                            imageVector =
-                                Icons.AutoMirrored.Filled.VolumeUp,
+                            imageVector = Icons.AutoMirrored.Filled.VolumeUp,
                             contentDescription = "Read aloud",
                             tint = MayraTextMuted,
                             modifier = Modifier.size(16.dp)
                         )
                     }
 
-                    Spacer(
-                        modifier = Modifier.width(4.dp)
-                    )
+                    Spacer(modifier = Modifier.width(4.dp))
 
-                    // Copy
                     IconButton(
                         onClick = {
-
                             val clipboard =
                                 context.getSystemService(
                                     Context.CLIPBOARD_SERVICE
@@ -536,10 +461,8 @@ fun ChatMessageItem(
                         },
                         modifier = Modifier.size(28.dp)
                     ) {
-
                         Icon(
-                            imageVector =
-                                Icons.Default.ContentCopy,
+                            imageVector = Icons.Default.ContentCopy,
                             contentDescription = "Copy text",
                             tint = MayraTextMuted,
                             modifier = Modifier.size(14.dp)
@@ -549,14 +472,9 @@ fun ChatMessageItem(
             }
         }
 
-        // ---------------------------------------------------------
         // USER AVATAR
-        // ---------------------------------------------------------
         if (isUser) {
-
-            Spacer(
-                modifier = Modifier.width(8.dp)
-            )
+            Spacer(modifier = Modifier.width(8.dp))
 
             Box(
                 modifier = Modifier
@@ -570,7 +488,6 @@ fun ChatMessageItem(
                     ),
                 contentAlignment = Alignment.Center
             ) {
-
                 Icon(
                     imageVector = Icons.Default.Person,
                     contentDescription = "User",
@@ -581,14 +498,11 @@ fun ChatMessageItem(
         }
     }
 
-    // -------------------------------------------------------------
     // FULL-SCREEN IMAGE PREVIEW
-    // -------------------------------------------------------------
     if (
         showImagePreview &&
         !message.imageUrl.isNullOrBlank()
     ) {
-
         AlertDialog(
             onDismissRequest = {
                 showImagePreview = false
@@ -597,15 +511,11 @@ fun ChatMessageItem(
             containerColor = Color.Black,
             modifier = Modifier.fillMaxSize(),
             title = {
-
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement =
-                        Arrangement.SpaceBetween,
-                    verticalAlignment =
-                        Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-
                     Text(
                         text = "Mayra AI",
                         color = MayraCyan,
@@ -618,7 +528,6 @@ fun ChatMessageItem(
                             showImagePreview = false
                         }
                     ) {
-
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Close image",
@@ -628,18 +537,15 @@ fun ChatMessageItem(
                 }
             },
             text = {
-
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(500.dp),
                     contentAlignment = Alignment.Center
                 ) {
-
                     AsyncImage(
                         model = message.imageUrl,
-                        contentDescription =
-                            "Full generated image",
+                        contentDescription = "Full generated image",
                         modifier = Modifier
                             .fillMaxSize()
                             .clip(RoundedCornerShape(12.dp)),
