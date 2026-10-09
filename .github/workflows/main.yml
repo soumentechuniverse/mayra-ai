@@ -32,43 +32,47 @@ jobs:
       - name: Make Gradle executable
         run: chmod +x gradlew
 
-      - name: Configure OpenAI API Key
+      - name: Prepare release signing
+        id: signing
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MAYRA_SIGNING_KEY_BASE64: ${{ secrets.MAYRA_SIGNING_KEY_BASE64 }}
+          MAYRA_KEYSTORE_PASSWORD: ${{ secrets.MAYRA_KEYSTORE_PASSWORD }}
+          MAYRA_KEY_ALIAS: ${{ secrets.MAYRA_KEY_ALIAS }}
+          MAYRA_KEY_PASSWORD: ${{ secrets.MAYRA_KEY_PASSWORD }}
         run: |
-          if [ -z "$OPENAI_API_KEY" ]; then
-            echo "ERROR: OPENAI_API_KEY secret is missing."
-            exit 1
+          if [ -n "$MAYRA_SIGNING_KEY_BASE64" ] &&              [ -n "$MAYRA_KEYSTORE_PASSWORD" ] &&              [ -n "$MAYRA_KEY_ALIAS" ] &&              [ -n "$MAYRA_KEY_PASSWORD" ]; then
+            echo "$MAYRA_SIGNING_KEY_BASE64" | base64 --decode > "$GITHUB_WORKSPACE/mayra-release.keystore"
+            echo "MAYRA_KEYSTORE_PATH=$GITHUB_WORKSPACE/mayra-release.keystore" >> "$GITHUB_ENV"
+            echo "MAYRA_KEYSTORE_PASSWORD=$MAYRA_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "MAYRA_KEY_ALIAS=$MAYRA_KEY_ALIAS" >> "$GITHUB_ENV"
+            echo "MAYRA_KEY_PASSWORD=$MAYRA_KEY_PASSWORD" >> "$GITHUB_ENV"
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Stable release signing is configured."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Stable signing secrets are missing; building a debug APK artifact only."
           fi
 
-          echo "OPENAI_API_KEY=$OPENAI_API_KEY" > .env
-          echo "OPENAI_API_KEY=$OPENAI_API_KEY" > app/.env
-          echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> local.properties
-
       - name: Run Unit Tests
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          ./gradlew testDebugUnitTest \
-            -POPENAI_API_KEY="$OPENAI_API_KEY"
+        run: ./gradlew testDebugUnitTest
 
-      - name: Build Debug APK
+      - name: Build APK
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          RELEASE_SIGNING_ENABLED: ${{ steps.signing.outputs.enabled }}
         run: |
-          ./gradlew assembleDebug \
-            -POPENAI_API_KEY="$OPENAI_API_KEY"
-
-      - name: Rename APK
-        run: |
-          cp app/build/outputs/apk/debug/app-debug.apk \
-             app/build/outputs/apk/debug/Mayra-AI.apk
+          if [ "$RELEASE_SIGNING_ENABLED" = "true" ]; then
+            ./gradlew assembleRelease
+            cp app/build/outputs/apk/release/app-release.apk Mayra-AI.apk
+          else
+            ./gradlew assembleDebug
+            cp app/build/outputs/apk/debug/app-debug.apk Mayra-AI.apk
+          fi
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v7
         with:
           name: Mayra-AI-APK
-          path: app/build/outputs/apk/debug/Mayra-AI.apk
+          path: Mayra-AI.apk
           if-no-files-found: error
 
       - name: Read App Version
@@ -85,6 +89,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release
+        if: steps.signing.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
