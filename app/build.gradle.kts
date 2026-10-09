@@ -5,7 +5,30 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+val releaseKeystorePath = System.getenv("MAYRA_KEYSTORE_PATH")
+val releaseStorePassword = System.getenv("MAYRA_KEYSTORE_PASSWORD")
+val releaseKeyAlias = System.getenv("MAYRA_KEY_ALIAS")
+val releaseKeyPassword = System.getenv("MAYRA_KEY_PASSWORD")
+val hasReleaseSigning = listOf(
+    releaseKeystorePath,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword
+).all { !it.isNullOrBlank() } &&
+    releaseKeystorePath?.let { file(it).isFile } == true
+
 android {
+    signingConfigs {
+        create("release") {
+            if (hasReleaseSigning) {
+                storeFile = file(requireNotNull(releaseKeystorePath))
+                storePassword = requireNotNull(releaseStorePassword)
+                keyAlias = requireNotNull(releaseKeyAlias)
+                keyPassword = requireNotNull(releaseKeyPassword)
+            }
+        }
+    }
+
     namespace = "com.example"
     compileSdk = 35
 
@@ -23,6 +46,9 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
 
             proguardFiles(
                 getDefaultProguardFile(
