@@ -22,6 +22,27 @@ export default async function handler(req, res) {
   }
 
   try {
+    const incoming = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+      ? req.body
+      : {};
+
+    const prompt = typeof incoming.prompt === "string" ? incoming.prompt.trim() : "";
+    if (!prompt || prompt.length > 4000) {
+      return res.status(400).json({ error: "Image prompt must contain 1–4000 characters." });
+    }
+
+    const allowedSizes = new Set(["1024x1024", "1536x1024", "1024x1536"]);
+    const size = allowedSizes.has(incoming.size) ? incoming.size : "1024x1024";
+
+    // Keep image generation on the model and output format supported by the app.
+    const payload = {
+      model: "gpt-image-1",
+      prompt,
+      size,
+      quality: "auto",
+      output_format: "png"
+    };
+
     const upstream = await fetch(
       "https://api.openai.com/v1/images/generations",
       {
@@ -30,7 +51,7 @@ export default async function handler(req, res) {
           "Authorization": `Bearer ${apiKey}`,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify(req.body ?? {})
+        body: JSON.stringify(payload)
       }
     );
 
