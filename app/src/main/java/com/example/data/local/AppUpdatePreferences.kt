@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Manages configurable update settings for Mayra AI.
- * Keeps the update source URL configurable so releases can be published without app code changes.
+ * The default source must match the public repository that publishes releases.
  */
 class AppUpdatePreferences(context: Context) {
 
@@ -36,6 +36,7 @@ class AppUpdatePreferences(context: Context) {
     companion object {
         private const val PREFS_NAME = "mayra_update_preferences"
         private const val KEY_UPDATE_URL = "update_source_url"
-        const val DEFAULT_UPDATE_URL = "https://api.github.com/repos/soumen-tech/mayra-ai/releases/latest"
+        const val DEFAULT_UPDATE_URL =
+            "https://api.github.com/repos/soumentechuniverse/mayra-ai/releases/latest"
     }
 }
