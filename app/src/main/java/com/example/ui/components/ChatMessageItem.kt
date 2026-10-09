@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -98,8 +97,6 @@ fun ChatMessageItem(
         },
         verticalAlignment = Alignment.Top
     ) {
-
-        // MAYRA AI AVATAR
         if (!isUser) {
             Box(
                 modifier = Modifier
@@ -120,18 +117,16 @@ fun ChatMessageItem(
             Spacer(modifier = Modifier.width(8.dp))
         }
 
-        // RESPONSIVE MESSAGE CONTENT
-        // Uses the remaining row width instead of a fixed 320.dp limit.
+        // Responsive width without the invalid weight import.
         Column(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .fillMaxWidth( if (isUser) 0.88f else 0.94f ),
             horizontalAlignment = if (isUser) {
                 Alignment.End
             } else {
                 Alignment.Start
             }
         ) {
-
-            // USER ATTACHMENT
             if (
                 isUser &&
                 (
@@ -174,7 +169,6 @@ fun ChatMessageItem(
                 }
             }
 
-            // MESSAGE BUBBLE
             Surface(
                 shape = RoundedCornerShape(
                     topStart = 16.dp,
@@ -206,8 +200,6 @@ fun ChatMessageItem(
                 Column(
                     modifier = Modifier.padding(14.dp)
                 ) {
-
-                    // GENERATED IMAGE
                     if (!message.imageUrl.isNullOrBlank()) {
                         Box(
                             modifier = Modifier
@@ -257,7 +249,6 @@ fun ChatMessageItem(
                         Spacer(modifier = Modifier.height(10.dp))
                     }
 
-                    // MESSAGE TEXT
                     if (
                         message.status == "SENDING" &&
                         message.content.isBlank()
@@ -269,7 +260,6 @@ fun ChatMessageItem(
                             textColor = MayraTextPrimary
                         )
 
-                        // STREAMING INDICATOR
                         if (message.status == "SENDING") {
                             Spacer(modifier = Modifier.height(6.dp))
 
@@ -293,7 +283,6 @@ fun ChatMessageItem(
                         }
                     }
 
-                    // WEB SEARCH SOURCES
                     if (!message.sourcesJson.isNullOrBlank()) {
                         val citations = remember(message.sourcesJson) {
                             try {
@@ -375,7 +364,6 @@ fun ChatMessageItem(
                         }
                     }
 
-                    // ERROR + RETRY
                     if (message.status == "ERROR") {
                         Spacer(modifier = Modifier.height(10.dp))
 
@@ -410,7 +398,6 @@ fun ChatMessageItem(
                 }
             }
 
-            // ASSISTANT MESSAGE ACTIONS
             if (
                 !isUser &&
                 message.status == "SENT" &&
@@ -472,7 +459,6 @@ fun ChatMessageItem(
             }
         }
 
-        // USER AVATAR
         if (isUser) {
             Spacer(modifier = Modifier.width(8.dp))
 
@@ -498,7 +484,6 @@ fun ChatMessageItem(
         }
     }
 
-    // FULL-SCREEN IMAGE PREVIEW
     if (
         showImagePreview &&
         !message.imageUrl.isNullOrBlank()
